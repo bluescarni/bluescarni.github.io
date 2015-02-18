@@ -1,0 +1,44 @@
+<map id="type_traits.hpp" name="type_traits.hpp">
+<area shape="rect" id="node2" href="$symbol__set_8hpp_source.html" title="symbol_set.hpp" alt="" coords="4349,80,4464,107"/>
+<area shape="rect" id="node4" href="$array__key_8hpp_source.html" title="array_key.hpp" alt="" coords="2390,611,2492,637"/>
+<area shape="rect" id="node5" href="$monomial_8hpp_source.html" title="monomial.hpp" alt="" coords="3097,693,3199,720"/>
+<area shape="rect" id="node6" href="$piranha_8hpp.html" title="Global piranha header file. " alt="" coords="3465,1083,3553,1109"/>
+<area shape="rect" id="node7" href="$polynomial_8hpp_source.html" title="polynomial.hpp" alt="" coords="3657,933,3767,960"/>
+<area shape="rect" id="node8" href="$divisor_8hpp_source.html" title="divisor.hpp" alt="" coords="2689,611,2772,637"/>
+<area shape="rect" id="node9" href="$divisor__series_8hpp_source.html" title="divisor_series.hpp" alt="" coords="4137,933,4263,960"/>
+<area shape="rect" id="node10" href="$poisson__series_8hpp_source.html" title="poisson_series.hpp" alt="" coords="3337,1008,3471,1035"/>
+<area shape="rect" id="node11" href="$is__key_8hpp_source.html" title="is_key.hpp" alt="" coords="3322,155,3405,181"/>
+<area shape="rect" id="node12" href="$math_8hpp_source.html" title="math.hpp" alt="" coords="3105,229,3180,256"/>
+<area shape="rect" id="node13" href="$mp__integer_8hpp_source.html" title="mp_integer.hpp" alt="" coords="1678,304,1788,331"/>
+<area shape="rect" id="node15" href="$series_8hpp_source.html" title="series.hpp" alt="" coords="4417,768,4499,795"/>
+<area shape="rect" id="node16" href="$ipow__substitutable__series_8hpp_source.html" title="ipow_substitutable\l_series.hpp" alt="" coords="4387,843,4516,885"/>
+<area shape="rect" id="node17" href="$power__series_8hpp_source.html" title="power_series.hpp" alt="" coords="4189,851,4312,877"/>
+<area shape="rect" id="node18" href="$substitutable__series_8hpp_source.html" title="substitutable_series.hpp" alt="" coords="3901,851,4064,877"/>
+<area shape="rect" id="node19" href="$t__substitutable__series_8hpp_source.html" title="t_substitutable_series.hpp" alt="" coords="4643,851,4817,877"/>
+<area shape="rect" id="node20" href="$trigonometric__series_8hpp_source.html" title="trigonometric_series.hpp" alt="" coords="4842,851,5005,877"/>
+<area shape="rect" id="node21" href="$series__multiplier_8hpp_source.html" title="series_multiplier.hpp" alt="" coords="4418,693,4557,720"/>
+<area shape="rect" id="node23" href="$kronecker__monomial_8hpp_source.html" title="kronecker_monomial.hpp" alt="" coords="1914,693,2080,720"/>
+<area shape="rect" id="node24" href="$real_8hpp_source.html" title="real.hpp" alt="" coords="1003,693,1071,720"/>
+<area shape="rect" id="node25" href="$real__trigonometric__kronecker__monomial_8hpp_source.html" title="real_trigonometric\l_kronecker_monomial.hpp" alt="" coords="734,603,908,645"/>
+<area shape="rect" id="node26" href="$thread__pool_8hpp_source.html" title="thread_pool.hpp" alt="" coords="4611,379,4725,405"/>
+<area shape="rect" id="node27" href="$memory_8hpp.html" title="Low&#45;level memory management functions. " alt="" coords="5272,453,5365,480"/>
+<area shape="rect" id="node28" href="$small__vector_8hpp_source.html" title="small_vector.hpp" alt="" coords="2176,528,2296,555"/>
+<area shape="rect" id="node33" href="$hash__set_8hpp_source.html" title="hash_set.hpp" alt="" coords="4739,528,4839,555"/>
+<area shape="rect" id="node37" href="$kronecker__array_8hpp_source.html" title="kronecker_array.hpp" alt="" coords="448,528,587,555"/>
+<area shape="rect" id="node38" href="$km__commons_8hpp_source.html" title="km_commons.hpp" alt="" coords="2481,304,2609,331"/>
+<area shape="rect" id="node39" href="$is__cf_8hpp_source.html" title="is_cf.hpp" alt="" coords="3483,453,3556,480"/>
+<area shape="rect" id="node40" href="$term_8hpp_source.html" title="term.hpp" alt="" coords="3257,528,3329,555"/>
+<area shape="rect" id="node41" href="$key__is__multipliable_8hpp_source.html" title="key_is_multipliable.hpp" alt="" coords="4097,611,4255,637"/>
+<area shape="rect" id="node42" href="$key__is__convertible_8hpp_source.html" title="key_is_convertible.hpp" alt="" coords="5064,229,5217,256"/>
+<area shape="rect" id="node43" href="$static__vector_8hpp_source.html" title="static_vector.hpp" alt="" coords="251,453,372,480"/>
+<area shape="rect" id="node3" href="$vector__merge__args_8hpp_source.html" title="vector_merge_args.hpp" alt="" coords="2769,528,2927,555"/>
+<area shape="rect" id="node22" href="$mp__rational_8hpp_source.html" title="mp_rational.hpp" alt="" coords="1339,611,1453,637"/>
+<area shape="rect" id="node36" href="$gcd_8hpp_source.html" title="gcd.hpp" alt="" coords="2371,528,2439,555"/>
+<area shape="rect" id="node14" href="$safe__cast_8hpp_source.html" title="safe_cast.hpp" alt="" coords="1491,528,1595,555"/>
+<area shape="rect" id="node34" href="$binomial_8hpp_source.html" title="binomial.hpp" alt="" coords="915,528,1009,555"/>
+<area shape="rect" id="node35" href="$pow_8hpp_source.html" title="pow.hpp" alt="" coords="1228,453,1297,480"/>
+<area shape="rect" id="node31" href="$settings_8hpp_source.html" title="settings.hpp" alt="" coords="4571,528,4664,555"/>
+<area shape="rect" id="node29" href="$dynamic__aligning__allocator_8hpp_source.html" title="dynamic_aligning_allocator.hpp" alt="" coords="5269,528,5472,555"/>
+<area shape="rect" id="node30" href="$cache__aligning__allocator_8hpp_source.html" title="cache_aligning_allocator.hpp" alt="" coords="5303,611,5491,637"/>
+<area shape="rect" id="node32" href="$tracing_8hpp_source.html" title="tracing.hpp" alt="" coords="4634,611,4720,637"/>
+</map>
