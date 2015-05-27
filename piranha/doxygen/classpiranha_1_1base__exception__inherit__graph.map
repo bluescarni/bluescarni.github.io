@@ -1,4 +1,0 @@
-<map id="piranha::base_exception" name="piranha::base_exception">
-<area shape="rect" id="node2" href="$structpiranha_1_1not__implemented__error.html" title="Exception for functionality not implemented or not available on the current platform. " alt="" coords="5,81,176,122"/>
-<area shape="rect" id="node3" href="$structpiranha_1_1zero__division__error.html" title="Exception for signalling division by zero. " alt="" coords="201,81,348,122"/>
-</map>
