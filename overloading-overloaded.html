@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Zig Zag Wanderer, Stuff of various degrees of importance">
+
+
+        <title>Overloading overloaded // Zig Zag Wanderer // Stuff of various degrees of importance</title>
+
+
+    <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/pure/0.3.0/pure-min.css">
+    <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.1.0/css/font-awesome.min.css">
+    <link rel="stylesheet" href="/theme/css/pure.css">
+    <link rel="stylesheet" href="/theme/css/pygments.css">
+
+    <script src="//cdnjs.cloudflare.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/fitvids/1.0.1/jquery.fitvids.min.js"></script>
+    <script>
+        $(document).ready(function(){
+            $(".content").fitVids();
+        });
+    </script>
+</head>
+
+<body>
+    <div class="pure-g-r" id="layout">
+        <div class="sidebar pure-u">
+            <div class="cover-img" style="background-image: url('https://raw.githubusercontent.com/bluescarni/site_source/master/side_pic.jpg')">
+                <div class="cover-body">
+                    <header class="header">
+                        <hgroup>
+                            <h1 class="brand-main"><a href="">Zig Zag Wanderer</a></h1>
+                            <p class="tagline">Stuff of various degrees of importance</p>
+                                <p class="links"><a href="/pages/about-me.html">About</a></p>
+                                <p class="links"><a href="/pages/research.html">Research</a></p>
+                                <p class="links"><a href="/pages/software.html">Software</a></p>
+                                <p class="social">
+                                    <a href="https://github.com/bluescarni/">
+                                        <i class="fa fa-github fa-3x"></i>
+                                    </a>
+                                </p>
+                        </hgroup>
+                    </header>
+                </div>
+            </div>
+        </div>
+    <div class="pure-u">
+        <div class="content">
+            <section class="post">
+                <header class="post-header">
+                    <h1>Overloading overloaded</h1>
+                        <p class="post-meta">
+                            // under                                 <a class="post-category" href="/tag/c.html">c++</a>
+                                <a class="post-category" href="/tag/coding.html">coding</a>
+                        </p>
+                </header>
+            </section>
+            <div class="section" id="introduction-and-motivation">
+<h2>Introduction and motivation</h2>
+<p>The fundamental idea of generic programming is that
+of writing classes, algorithms and functions able to
+operate on arbitrary types. In the jargon of modern C++, one says that
+a software component defines a <em>concept</em> (i.e., a set of requirements)
+of which a type <tt class="docutils literal">T</tt> must be a <em>model</em> in order for <tt class="docutils literal">T</tt> to be usable
+with that component.</p>
+<p>Take for instance the <tt class="docutils literal"><span class="pre">std::sort()</span></tt> function from the standard C++ library.
+One of its prototypes <a class="reference external" href="http://en.cppreference.com/w/cpp/algorithm/sort">reads</a>:</p>
+<div class="highlight"><pre><span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">RandomIt</span><span class="o">&gt;</span>
+<span class="kt">void</span> <span class="n">sort</span><span class="p">(</span><span class="n">RandomIt</span> <span class="n">first</span><span class="p">,</span> <span class="n">RandomIt</span> <span class="n">last</span><span class="p">);</span>
+</pre></div>
+<p>Among others, one of the requirements stipulated by <tt class="docutils literal"><span class="pre">std::sort()</span></tt> is that
+the value type of <tt class="docutils literal">RandomIt</tt> (that is, the type we are sorting) must be equipped
+with a less-than operator (<tt class="docutils literal"><span class="pre">std::sort()</span></tt> is a <a class="reference external" href="http://en.wikipedia.org/wiki/Comparison_sort">comparison sort</a>).
+It is thus possible to sort out-of-the-box, for instance, vectors of integers
+or floating point values (<a class="reference external" href="http://stackoverflow.com/questions/14784263/stdout-of-range-during-stdsort-with-custom-comparator">disregarding NaNs</a> for a second). It will not however
+be possible to sort instances of <tt class="docutils literal"><span class="pre">std::complex</span></tt>, as <tt class="docutils literal"><span class="pre">operator&lt;()</span></tt> is not implemented
+for these types (C++ wisely does not get into the business of defining an ordering relation
+for complex numbers).</p>
+<p>If the type we are sorting does not provide an <tt class="docutils literal"><span class="pre">operator&lt;()</span></tt>, we have a couple of possible options.</p>
+<p>The first option is to use the other version of <tt class="docutils literal"><span class="pre">std::sort()</span></tt> provided by the standard library,
+which reads:</p>
+<div class="highlight"><pre><span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">RandomIt</span><span class="p">,</span> <span class="k">class</span> <span class="nc">Compare</span><span class="o">&gt;</span>
+<span class="kt">void</span> <span class="n">sort</span><span class="p">(</span><span class="n">RandomIt</span> <span class="n">first</span><span class="p">,</span> <span class="n">RandomIt</span> <span class="n">last</span><span class="p">,</span> <span class="n">Compare</span> <span class="n">comp</span><span class="p">);</span>
+</pre></div>
+<p>Here the additional parameter <tt class="docutils literal">comp</tt> must be a function-like object able to compare
+instances of the value type according to some strict weak ordering relation
+(here are the <a class="reference external" href="http://en.cppreference.com/w/cpp/concept/Compare">gory details</a> in their standardese glory). This basically means
+that we can tell <tt class="docutils literal"><span class="pre">std::sort()</span></tt> <em>how</em> instances of the value type should be compared
+for sorting purposes. In the case of complex numbers, we might want to sort a vector
+of complex values according to their norm, or maybe to their real or imaginary component,
+depending on the context.</p>
+<p>The second option is to equip a type with an appropriate <tt class="docutils literal"><span class="pre">operator&lt;()</span></tt> implementation
+via <a class="reference external" href="http://en.wikipedia.org/wiki/Operator_overloading">operator overloading</a>. While for <tt class="docutils literal"><span class="pre">std::complex</span></tt> this is probably not a good idea
+(due to the lack of a &quot;natural&quot; ordering for complex numbers),
+for other types it is certainly an appropriate solution.</p>
+<p>Now, one of the challenges I faced with
+<a class="reference external" href="https://github.com/bluescarni/piranha">Piranha</a> was related to the design of a generic and user-extensible
+library of mathematical functions. As a simple example, consider the expression</p>
+<div class="math">
+\begin{equation*}
+\frac{1}{2}x\cos\left(\alpha+\beta\right).
+\end{equation*}
+</div>
+<p>This is a <a class="reference external" href="http://www.sciencedirect.com/science/article/pii/S0747717100903961">Poisson series</a> that Piranha can represent symbolically. In order to evaluate
+this expression for specific numerical values of the variables <span class="math">\(x\)</span>, <span class="math">\(\alpha\)</span>
+and <span class="math">\(\beta\)</span>, we need to be able to compute the cosine of those numerical values.
+The way in which the cosine is computed will depend on the type we use for evaluation:
+if we use standard C++ floating-point types (<tt class="docutils literal">float</tt>, <tt class="docutils literal">double</tt> and <tt class="docutils literal">long double</tt>),
+we probably want to use the standard <tt class="docutils literal"><span class="pre">std::cos()</span></tt> function. But, if we need more precision,
+we might implement a custom multiple-precision floating-point type (or, more likely, write a C++
+wrapper around <a class="reference external" href="http://www.mpfr.org/">MPFR</a>). We are then faced with the task of informing Piranha about
+<em>how</em> to evaluate the cosine function for our brand new multiprecision floating-point type.</p>
+<p>A possible solution to this problem is to use the the mechanism of <a class="reference external" href="http://en.wikipedia.org/wiki/Function_overloading">function overloading</a>. However,
+an overloading-based approach suffers from a few shortcomings. For starters,
+the <a class="reference external" href="http://en.cppreference.com/w/cpp/language/overload_resolution">overloading rules</a> in C++ are notoriously complicated. The interactions between
+function overloads, templates, and specialisations can often be counterintuitive, as explained
+in this classic <a class="reference external" href="http://www.gotw.ca/publications/mill17.htm">GotW</a> by Herb Sutter. Function overloading is also sensitive to declaration
+order and interacts with implicit conversions.</p>
+<p>Piranha aims to be a completely generic system, open to extensions via user-defined custom types
+(such as the hypothetical multiprecision floating-point type above) the core library knows nothing
+about. After some initial
+experiments, it became clear that a purely overloading-based solution was not good enough
+to realise this goal and that an alternative approach was necessary.</p>
+</div>
+<div class="section" id="a-generic-cos-implementation">
+<h2>A generic <tt class="docutils literal">cos()</tt> implementation</h2>
+<p>The solution adopted in Piranha starts from where the aforementioned <a class="reference external" href="http://www.gotw.ca/publications/mill17.htm">GotW</a> ends. There is a single
+generic <tt class="docutils literal">cos()</tt> function in the <tt class="docutils literal">math</tt> sub-namespace which looks like this:</p>
+<div class="highlight"><pre><span class="k">namespace</span> <span class="n">math</span>
+<span class="p">{</span>
+
+<span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="kr">inline</span> <span class="k">auto</span> <span class="n">cos</span><span class="p">(</span><span class="k">const</span> <span class="n">T</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="k">decltype</span><span class="p">(</span><span class="n">cos_impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">()(</span><span class="n">x</span><span class="p">))</span>
+<span class="p">{</span>
+    <span class="k">return</span> <span class="n">cos_impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">()(</span><span class="n">x</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="p">}</span>
+</pre></div>
+<p>The function forwards the computation to an helper template class called <tt class="docutils literal">cos_impl</tt>, which is parametrised
+over the type <tt class="docutils literal">T</tt> of the argument <tt class="docutils literal">x</tt> and expected to provide a call operator to which the original
+argument <tt class="docutils literal">x</tt> is passed. The return type of <tt class="docutils literal">cos()</tt> is automatically deduced from the call operator
+of <tt class="docutils literal">cos_impl</tt>. The default implementation of <tt class="docutils literal">cos_impl</tt> is an empty class:</p>
+<div class="highlight"><pre><span class="k">namespace</span> <span class="n">math</span>
+<span class="p">{</span>
+
+<span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="p">,</span> <span class="k">typename</span> <span class="o">=</span> <span class="kt">void</span><span class="o">&gt;</span>
+<span class="k">struct</span> <span class="n">cos_impl</span>
+<span class="p">{};</span>
+
+<span class="p">}</span>
+</pre></div>
+<p>The second &quot;ghost&quot; template parameter, unnamed and defaulting to <tt class="docutils literal">void</tt>, is there to allow the use of
+the <a class="reference external" href="http://en.cppreference.com/w/cpp/types/enable_if">enable-if mechanism</a>. We can then provide a specialisation of <tt class="docutils literal">cos_impl</tt> for C++ floating-point types,
+which reads:</p>
+<div class="highlight"><pre><span class="k">namespace</span> <span class="n">math</span>
+<span class="p">{</span>
+
+<span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="k">struct</span> <span class="n">cos_impl</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="k">typename</span> <span class="n">std</span><span class="o">::</span><span class="n">enable_if</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">is_floating_point</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">value</span><span class="o">&gt;::</span><span class="n">type</span><span class="o">&gt;</span>
+<span class="p">{</span>
+    <span class="k">auto</span> <span class="k">operator</span><span class="p">()(</span><span class="k">const</span> <span class="n">T</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">)</span> <span class="k">const</span> <span class="o">-&gt;</span> <span class="k">decltype</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">cos</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+    <span class="p">{</span>
+        <span class="k">return</span> <span class="n">std</span><span class="o">::</span><span class="n">cos</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+    <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="p">}</span>
+</pre></div>
+<p>That is, whenever <tt class="docutils literal">cos_impl</tt> is instantiated with a type <tt class="docutils literal">T</tt> which is a floating-point type, the
+second (specialised) implementation will be selected. If now we try to call the <tt class="docutils literal">cos()</tt> function with,
+let's say, an argument of type <tt class="docutils literal">double</tt>, the call will ultimately be forwarded to <tt class="docutils literal"><span class="pre">std::cos()</span></tt> as expected.</p>
+<p>Now, what happens when we call <tt class="docutils literal">cos()</tt> with an <tt class="docutils literal">int</tt> argument? The specialisation of <tt class="docutils literal">cos_impl</tt>
+comes into play only when <tt class="docutils literal">T</tt> is a floating-point type, thus an <tt class="docutils literal">int</tt> argument will be forwarded to the
+unspecialised default <tt class="docutils literal">cos_impl</tt> functor. The unspecialised <tt class="docutils literal">cos_impl</tt> does not provide any call operator,
+and thus a compile-time error will arise. GCC 5.1 says:</p>
+<div class="highlight"><pre><span class="nv">$ </span>g++-5.1.0 -std<span class="o">=</span>c++11 cos.cpp
+<span class="o">[</span>...<span class="o">]</span>
+error: no matching <span class="k">function</span> <span class="k">for</span> call to ‘cos<span class="o">(</span>int<span class="o">)</span>’
+<span class="o">[</span>...<span class="o">]</span>
+</pre></div>
+<p>As you can see there is no reference in the error message about a missing call operator. The compiler actually
+complains that there is no <tt class="docutils literal">cos()</tt> function which takes an argument of type <tt class="docutils literal">int</tt>. What happens here is that
+the declaration of the <tt class="docutils literal">cos()</tt> function,</p>
+<div class="highlight"><pre><span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="kr">inline</span> <span class="k">auto</span> <span class="n">cos</span><span class="p">(</span><span class="k">const</span> <span class="n">T</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="k">decltype</span><span class="p">(</span><span class="n">cos_impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">()(</span><span class="n">x</span><span class="p">));</span>
+</pre></div>
+<p>generates an error due to the fact that the expression <tt class="docutils literal"><span class="pre">cos_impl&lt;T&gt;()(x)</span></tt> is ill-formed
+when <tt class="docutils literal">T</tt> is <tt class="docutils literal">int</tt> (because of the
+missing call operator in the default <tt class="docutils literal">cos_impl</tt> implementation). This error is
+treated specially due to a set of rules that go under the name of <a class="reference external" href="http://en.cppreference.com/w/cpp/language/sfinae#Expression_SFINAE">SFINAE</a> (substitution failure is not an error):
+instead of generating a &quot;hard&quot; compiler error, the function that triggered the failure is simply <em>removed</em>.
+For all practical purposes, it is as-if the <tt class="docutils literal">cos()</tt> function had been erased from the source code, when invoked with
+an argument of type <tt class="docutils literal">int</tt>. The error resulting from the
+compilation thus originates from the missing <tt class="docutils literal">cos()</tt> function rather than from the missing call operator. The distinction
+between these two types of error might appear academic at first sight (after all, we end up in both cases with an aborted
+compilation), but it is crucial for the development of further
+metaprogramming techniques involving the detection of the availability of a function at compile-time.</p>
+</div>
+<div class="section" id="what-have-we-gained-so-far">
+<h2>What have we gained so far?</h2>
+<p>The technique described above for the implementation of a generic, user-extensible <tt class="docutils literal">cos()</tt> function has a few
+interesting features:</p>
+<ul class="simple">
+<li>it is entirely based on compile-time metaprogramming: no virtual functions, no calling overhead, easily optimisable
+by any modern compiler;</li>
+<li>we avoid the headaches of function overloading: there is exactly one entry point, completely generic;</li>
+<li>by using class template specialisation instead of overloading, the order in which the specialisations are declared
+does not matter (the compiler must consider all the visible template specialisations before choosing one);</li>
+<li>we are also avoiding surprises with implicit conversions: the example above shows how the implementation
+is based on exact type matching - use with an <tt class="docutils literal">int</tt> argument will result in a compilation error, even if
+<tt class="docutils literal">int</tt> instances are implicitly convertible to floating-point types;</li>
+<li>the technique is nonintrusive: user-defined types are not required to derive from a common base class or to
+implement specific methods in order to be usable by our generic <tt class="docutils literal">cos()</tt> function.
+They will only need to provide an additional specialisation of the implementation functor;</li>
+<li>the technique is SFINAE-friendly: in case the <tt class="docutils literal">cos_impl</tt> specialisation is missing, the <tt class="docutils literal">cos()</tt> function
+is removed from the overload resolution set;</li>
+<li>unlike with normal function overloading, we can specialise the behaviour not only based on concrete types, but
+on arbitrary compile-time <em>predicates</em>.</li>
+</ul>
+<p>The last point is, I think, particularily interesting. It is not unusal in scientific C++ libraries to see either</p>
+<ul class="simple">
+<li>heavy usage of macros to declare and define multiple overloads of the same function with different
+argument types (<tt class="docutils literal">float</tt>, <tt class="docutils literal">double</tt>, <tt class="docutils literal">long</tt>, etc.), or</li>
+<li>functions implemented in terms of &quot;wide&quot; types (e.g., <tt class="docutils literal">long double</tt> and <tt class="docutils literal">long long</tt>) that can be used with
+narrower types (e.g., <tt class="docutils literal">float</tt> and <tt class="docutils literal">int</tt>) via implicit conversions.</li>
+</ul>
+<p>With this approach, any compile-time predicate that produces a boolean value can be used to specialise the
+implementation. In the example above, we used the predicate</p>
+<div class="highlight"><pre><span class="n">std</span><span class="o">::</span><span class="n">is_floating_point</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">value</span>
+</pre></div>
+<p>in order to specialise the implementation for floating-point types. In the same fashion, we could implement a generic
+<tt class="docutils literal">abs()</tt> function that, for instance, returns the input argument unchanged when invoked on unsigned integer types.
+The specialisation in this case would use the predicate:</p>
+<div class="highlight"><pre><span class="n">std</span><span class="o">::</span><span class="n">is_integral</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">value</span> <span class="o">&amp;&amp;</span> <span class="n">std</span><span class="o">::</span><span class="n">is_unsigned</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">value</span>
+</pre></div>
+<p>This predicate would catch all the standard unsigned <a class="reference external" href="http://en.cppreference.com/w/cpp/language/types#Integer_types">integral types</a> available in C++.</p>
+<div class="section" id="intermission-detecting-the-availability-of-cos">
+<h3>Intermission: detecting the availability of <tt class="docutils literal">cos()</tt></h3>
+<p>One of the points mentioned above is the &quot;SFINAE-friendliness&quot; of the solution: in case of a missing
+<tt class="docutils literal">cos_impl</tt> specialisation, the <tt class="docutils literal">cos()</tt> function is removed from the overload resolution set. We can use this
+property to implement a type trait that detects the availability of a <tt class="docutils literal">cos()</tt> for a specific type at compile-time.</p>
+<p>A possible, C++11-oriented way of implementing such a type trait (by no means the only one) is the following:</p>
+<div class="highlight"><pre><span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="k">class</span> <span class="nc">has_cosine</span>
+<span class="p">{</span>
+        <span class="k">struct</span> <span class="n">yes</span> <span class="p">{};</span>
+        <span class="k">struct</span> <span class="n">no</span> <span class="p">{};</span>
+        <span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T1</span><span class="o">&gt;</span>
+        <span class="k">static</span> <span class="k">auto</span> <span class="n">test</span><span class="p">(</span><span class="k">const</span> <span class="n">T1</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="k">decltype</span><span class="p">(</span><span class="n">math</span><span class="o">::</span><span class="n">cos</span><span class="p">(</span><span class="n">x</span><span class="p">),</span><span class="kt">void</span><span class="p">(),</span><span class="n">yes</span><span class="p">());</span>
+        <span class="k">static</span> <span class="n">no</span> <span class="nf">test</span><span class="p">(...);</span>
+    <span class="k">public</span><span class="o">:</span>
+        <span class="k">static</span> <span class="k">const</span> <span class="kt">bool</span> <span class="n">value</span> <span class="o">=</span> <span class="n">std</span><span class="o">::</span><span class="n">is_same</span><span class="o">&lt;</span><span class="k">decltype</span><span class="p">(</span><span class="n">test</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">declval</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">())),</span><span class="n">yes</span><span class="o">&gt;::</span><span class="n">value</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+<p>Without getting into the details of the implementation (the interested reader can use this <a class="reference external" href="http://en.wikibooks.org/wiki/More_C%2B%2B_Idioms/Member_Detector">Wikibooks page</a>
+as a starting point), the important takeaway is that now</p>
+<div class="highlight"><pre><span class="n">has_cosine</span><span class="o">&lt;</span><span class="kt">double</span><span class="o">&gt;::</span><span class="n">value</span>
+</pre></div>
+<p>is a compile-time constant with <tt class="docutils literal">true</tt> value, while</p>
+<div class="highlight"><pre><span class="n">has_cosine</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;::</span><span class="n">value</span>
+</pre></div>
+<p>is a compile-time constant with <tt class="docutils literal">false</tt> value. In Piranha, most generic functions are paired with a
+type trait that determines at compile-time whether it is possible or not to call the function with
+a specific set of argument types. Such type traits become then the basic building blocks of compile-time
+algorithms that, for instance, can select different implementations of a specific functionality based
+on the capabilities offered by the involved types.</p>
+</div>
+</div>
+<div class="section" id="a-step-further-exploiting-the-default-implementation">
+<h2>A step further: exploiting the default implementation</h2>
+<p>In the example above, it does not make much sense to provide a default implementation for cosine, and thus
+the unspecialised <tt class="docutils literal">cos_impl</tt> functor does not implement any call operator. For other operations, however,
+a default implementation might actually make sense.</p>
+<p>Consider for instance the classic <a class="reference external" href="http://en.wikipedia.org/wiki/Multiply%E2%80%93accumulate_operation">multiply-accumulate operation</a> (FMA for short). Since it is at the basis of so many algorithms,
+from linear algebra to symbolic manipulation, many libraries provide optimised implementations of this primitive.
+A few examples:</p>
+<ul class="simple">
+<li>the <a class="reference external" href="http://en.cppreference.com/w/cpp/numeric/math/fma">C++ standard library</a> offers <tt class="docutils literal"><span class="pre">std::fma()</span></tt>, usable with floating-point types;</li>
+<li>the <a class="reference external" href="https://gmplib.org/manual/Integer-Arithmetic.html">GMP library</a> offers <tt class="docutils literal">mpz_addmul()</tt>;</li>
+<li>the <a class="reference external" href="http://www.mpfr.org/mpfr-current/mpfr.html#Special-Functions">MPFR library</a> offers <tt class="docutils literal">mpfr_fma()</tt>.</li>
+</ul>
+<p>The use of a specialised FMA operation can typically result in increased performance and/or accuracy.
+In a generic scientific library it thus makes sense to try to take advantage of such a feature, if
+available.</p>
+<p>On the other hand, a specialised FMA is an optimisation: it would be nice not to force the user of the library
+to implement the FMA primitive for her user-defined type, if for any reason she is not interested in it. The FMA operation, after all,
+is essentially equivalent to</p>
+<div class="math">
+\begin{equation*}
+a \leftarrow a + ( b \times c )
+\end{equation*}
+</div>
+<p>so it can be implemented also in terms of addition, multiplication and assignment.</p>
+<p>In Piranha, the FMA operation is called <tt class="docutils literal">multiply_accumulate()</tt>, and its implementation reads:</p>
+<div class="highlight"><pre><span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="kr">inline</span> <span class="k">auto</span> <span class="n">multiply_accumulate</span><span class="p">(</span><span class="n">T</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">,</span> <span class="k">const</span> <span class="n">T</span> <span class="o">&amp;</span><span class="n">y</span><span class="p">,</span> <span class="k">const</span> <span class="n">T</span> <span class="o">&amp;</span><span class="n">z</span><span class="p">)</span> <span class="o">-&gt;</span>
+   <span class="k">decltype</span><span class="p">(</span><span class="n">multiply_accumulate_impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">()(</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">,</span><span class="n">z</span><span class="p">))</span>
+<span class="p">{</span>
+   <span class="k">return</span> <span class="n">multiply_accumulate_impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">()(</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">,</span><span class="n">z</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+<p>The default implementation functor is:</p>
+<div class="highlight"><pre><span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="p">,</span> <span class="k">typename</span> <span class="o">=</span> <span class="kt">void</span><span class="o">&gt;</span>
+<span class="k">struct</span> <span class="n">multiply_accumulate_impl</span>
+<span class="p">{</span>
+   <span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T2</span><span class="o">&gt;</span>
+   <span class="k">auto</span> <span class="k">operator</span><span class="p">()(</span><span class="n">T2</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">,</span> <span class="k">const</span> <span class="n">T2</span> <span class="o">&amp;</span><span class="n">y</span><span class="p">,</span> <span class="k">const</span> <span class="n">T2</span> <span class="o">&amp;</span><span class="n">z</span><span class="p">)</span> <span class="k">const</span> <span class="o">-&gt;</span> <span class="k">decltype</span><span class="p">(</span><span class="n">x</span> <span class="o">+=</span> <span class="n">y</span> <span class="o">*</span> <span class="n">z</span><span class="p">)</span>
+   <span class="p">{</span>
+      <span class="k">return</span> <span class="n">x</span> <span class="o">+=</span> <span class="n">y</span> <span class="o">*</span> <span class="n">z</span><span class="p">;</span>
+   <span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+<p>(More on that second template parameter <tt class="docutils literal">T2</tt> in a moment)</p>
+<p>The call operator of the default implementation is now present, and it implements the FMA operation in terms of multiplication
+and in-place addition. Any type which supports these two operations (e.g., <tt class="docutils literal">int</tt>) will thus have a working FMA implementation.</p>
+<p>We can now specialise the behaviour for, e.g., floating point types:</p>
+<div class="highlight"><pre><span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="k">struct</span> <span class="n">multiply_accumulate_impl</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="k">typename</span> <span class="n">std</span><span class="o">::</span><span class="n">enable_if</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">is_floating_point</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">value</span><span class="o">&gt;::</span><span class="n">type</span><span class="o">&gt;</span>
+<span class="p">{</span>
+   <span class="k">auto</span> <span class="k">operator</span><span class="p">()(</span><span class="n">T</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">,</span> <span class="k">const</span> <span class="n">T</span> <span class="o">&amp;</span><span class="n">y</span><span class="p">,</span> <span class="k">const</span> <span class="n">T</span> <span class="o">&amp;</span><span class="n">z</span><span class="p">)</span> <span class="k">const</span> <span class="o">-&gt;</span> <span class="k">decltype</span><span class="p">(</span><span class="n">x</span> <span class="o">=</span> <span class="n">std</span><span class="o">::</span><span class="n">fma</span><span class="p">(</span><span class="n">y</span><span class="p">,</span><span class="n">z</span><span class="p">,</span><span class="n">x</span><span class="p">))</span>
+   <span class="p">{</span>
+      <span class="k">return</span> <span class="n">x</span> <span class="o">=</span> <span class="n">std</span><span class="o">::</span><span class="n">fma</span><span class="p">(</span><span class="n">y</span><span class="p">,</span><span class="n">z</span><span class="p">,</span><span class="n">x</span><span class="p">);</span>
+   <span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+<p>What happens when we try to call the default implementation on a type which does not support addition, multiplication or
+assignment? Let's try an FMA on <tt class="docutils literal"><span class="pre">std::string</span></tt>:</p>
+<div class="highlight"><pre>error: no matching <span class="k">function</span> <span class="k">for</span> call to ‘multiply_accumulate<span class="o">(</span>std::string<span class="p">&amp;</span>, std::string<span class="p">&amp;</span>, std::string<span class="p">&amp;</span><span class="o">)</span>’
+</pre></div>
+<p>It looks like the <tt class="docutils literal">multiply_accumulate()</tt> function for <tt class="docutils literal"><span class="pre">std::string</span></tt> has been erased, and there is no reference to the missing
+<tt class="docutils literal">*</tt> operator for <tt class="docutils literal"><span class="pre">std::string</span></tt>. How does this happen? The answer is in the implementation of the call
+operator in the default implementation of <tt class="docutils literal">multiply_accumulate_impl</tt>:</p>
+<div class="highlight"><pre><span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T2</span><span class="o">&gt;</span>
+<span class="k">auto</span> <span class="k">operator</span><span class="p">()(</span><span class="n">T2</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">,</span> <span class="k">const</span> <span class="n">T2</span> <span class="o">&amp;</span><span class="n">y</span><span class="p">,</span> <span class="k">const</span> <span class="n">T2</span> <span class="o">&amp;</span><span class="n">z</span><span class="p">)</span> <span class="k">const</span> <span class="o">-&gt;</span> <span class="k">decltype</span><span class="p">(</span><span class="n">x</span> <span class="o">+=</span> <span class="n">y</span> <span class="o">*</span> <span class="n">z</span><span class="p">)</span>
+<span class="p">{</span>
+   <span class="k">return</span> <span class="n">x</span> <span class="o">+=</span> <span class="n">y</span> <span class="o">*</span> <span class="n">z</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+<p>This operator is a template method which deduces its return type from the expression <tt class="docutils literal">x += y * z</tt>. As such, if the
+expression <tt class="docutils literal">x += y * z</tt> is ill-formed, then the call operator is, under SFINAE rules, removed from the overload resolution set,
+and <tt class="docutils literal">multiply_accumulate_impl</tt> is effectively left without a call operator. The top-level <tt class="docutils literal">multiply_accumulate()</tt> function
+will then see, when called with <tt class="docutils literal"><span class="pre">std::string</span></tt> arguments, a <tt class="docutils literal">multiply_accumulate_impl</tt> functor with no call operator, and thus
+SFINAE rules will also remove the <tt class="docutils literal">multiply_accumulate()</tt> function from the overload resolution set. The compiler's error
+message lamenting the lack of a suitable <tt class="docutils literal">multiply_accumulate()</tt> function is thus explained. This also means that, even in the
+presence of a default implementation, it will still be possible to write a type trait to detect the availability
+of <tt class="docutils literal">multiply_accumulate()</tt>, in the same fashion as done above for <tt class="docutils literal">has_cosine</tt>.</p>
+</div>
+<div class="section" id="generalising-to-multiple-arguments">
+<h2>Generalising to multiple arguments</h2>
+<p>The two examples we have seen so far involve specialisation based on a single type (<tt class="docutils literal">cos()</tt> is a single-argument function,
+<tt class="docutils literal">multiply_accumulate()</tt> operates on three arguments of the same type by design). It is however clear that the patterns described
+above can readily be generalised to functions accepting multiple arguments of different types.</p>
+<p>An obvious example is exponentiation, <tt class="docutils literal">pow()</tt>, which is a function of two arguments: a base and an exponent.
+In Piranha, the <tt class="docutils literal">pow()</tt> function has different implementations depending on the involved types. A few examples:</p>
+<ul class="simple">
+<li>if both the base and the exponent are C++ arithmetic types and at least one of the two arguments is a floating-point type,
+then <tt class="docutils literal"><span class="pre">std::pow()</span></tt> is used;</li>
+<li>if at least one argument is an <tt class="docutils literal">integer</tt> (an arbitrary precision integral type implemented on top of GMP) and the other
+is an <tt class="docutils literal">integer</tt> or a C++ integral type, then the exact result will be returned as an <tt class="docutils literal">integer</tt> (computed via a GMP routine);</li>
+<li>if an argument is an <tt class="docutils literal">integer</tt> and the other one is a floating-point type, then the <tt class="docutils literal">integer</tt> argument is converted to
+the floating-point type and the result computed via <tt class="docutils literal"><span class="pre">std::pow()</span></tt>;</li>
+<li>if the two arguments are both C++ integral types, then the exact result is returned as an <tt class="docutils literal">integer</tt>.</li>
+</ul>
+<p>The implementation of Piranha's <tt class="docutils literal">pow()</tt> function is too long to be reproduced here. It is avaiable from the <a class="reference external" href="https://github.com/bluescarni/piranha/blob/4d600d04b48af3ce241d91d2f8f0fde45f822872/src/pow.hpp">Git repository</a> for the
+interested reader. As in the previous examples, the implementation is SFINAE-friendly and lends itself to compile-time introspection
+via a type trait.</p>
+</div>
+<div class="section" id="closing-remarks">
+<h2>Closing remarks</h2>
+<p>SFINAE-based template metaprogramming in C++11 can be used to introduce a flexible and efficient method of compile-time function dispatching based
+on partial class template specialisation. The method is nonintrusive, it has no runtime CPU or memory overhead, it sidesteps some problematic aspects
+of function overloading, and it allows to select different
+implementations of the same function for different combinations of argument types. The selection can be based either on exact type
+matching or, more generally, on logical compile-time predicates on the involved types. The technique is SFINAE-friendly and lends itself
+to compile-time introspection.</p>
+</div>
+<script type='text/javascript'>if (!document.getElementById('mathjaxscript_pelican_#%@#$@#')) {
+    var align = "center",
+        indent = "0em",
+        linebreak = "false";
+
+    if (false) {
+        align = (screen.width < 768) ? "left" : align;
+        indent = (screen.width < 768) ? "0em" : indent;
+        linebreak = (screen.width < 768) ? 'true' : linebreak;
+    }
+    
+    var mathjaxscript = document.createElement('script');
+    mathjaxscript.id = 'mathjaxscript_pelican_#%@#$@#';
+    mathjaxscript.type = 'text/javascript';
+    mathjaxscript.src = '//cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML';
+    mathjaxscript[(window.opera ? "innerHTML" : "text")] =
+        "MathJax.Hub.Config({" +
+        "    config: ['MMLorHTML.js']," +
+        "    TeX: { extensions: ['AMSmath.js','AMSsymbols.js','noErrors.js','noUndefined.js'], equationNumbers: { autoNumber: 'AMS' } }," +
+        "    jax: ['input/TeX','input/MathML','output/HTML-CSS']," +
+        "    extensions: ['tex2jax.js','mml2jax.js','MathMenu.js','MathZoom.js']," +
+        "    displayAlign: '"+ align +"'," +
+        "    displayIndent: '"+ indent +"'," +
+        "    showMathMenu: true," +
+        "    tex2jax: { " +
+        "        inlineMath: [ ['\\\\(','\\\\)'] ], " +
+        "        displayMath: [ ['$$','$$'] ]," +
+        "        processEscapes: true," +
+        "        preview: 'TeX'," +
+        "    }, " +
+        "    'HTML-CSS': { " +
+        "        styles: { '.MathJax_Display, .MathJax .mo, .MathJax .mi, .MathJax .mn': {color: 'inherit ! important'} }," +
+        "        linebreaks: { automatic: "+ linebreak +", width: '90% container' }," +
+        "    }, " +
+        "}); " +
+        "if ('default' !== 'default') {" +
+            "MathJax.Hub.Register.StartupHook('HTML-CSS Jax Ready',function () {" +
+                "var VARIANT = MathJax.OutputJax['HTML-CSS'].FONTDATA.VARIANT;" +
+                "VARIANT['normal'].fonts.unshift('MathJax_default');" +
+                "VARIANT['bold'].fonts.unshift('MathJax_default-bold');" +
+                "VARIANT['italic'].fonts.unshift('MathJax_default-italic');" +
+                "VARIANT['-tex-mathit'].fonts.unshift('MathJax_default-italic');" +
+            "});" +
+            "MathJax.Hub.Register.StartupHook('SVG Jax Ready',function () {" +
+                "var VARIANT = MathJax.OutputJax.SVG.FONTDATA.VARIANT;" +
+                "VARIANT['normal'].fonts.unshift('MathJax_default');" +
+                "VARIANT['bold'].fonts.unshift('MathJax_default-bold');" +
+                "VARIANT['italic'].fonts.unshift('MathJax_default-italic');" +
+                "VARIANT['-tex-mathit'].fonts.unshift('MathJax_default-italic');" +
+            "});" +
+        "}";
+    (document.body || document.getElementsByTagName('head')[0]).appendChild(mathjaxscript);
+}
+</script>
+            <a href="#" class="go-top">Go Top</a>
+<footer class="footer">
+    <p>&copy; 2015 Francesco Biscani &ndash;
+        Built with <a href="https://github.com/PurePelicanTheme/pure-single">Pure Theme</a>
+        for <a href="http://blog.getpelican.com/">Pelican</a>
+        <br />
+        <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-sa/4.0/80x15.png" /></a>
+    </p>
+</footer>        </div>
+    </div>
+    </div>
+    <script>
+        var $top = $('.go-top');
+
+        // Show or hide the sticky footer button
+        $(window).scroll(function() {
+            if ($(this).scrollTop() > 200) {
+                $top.fadeIn(200);
+            } else {
+                $top.fadeOut(200);
+            }
+        });
+
+        // Animate the scroll to top
+        $top.click(function(event) {
+            event.preventDefault();
+            $('html, body').animate({scrollTop: 0}, 300);
+        })
+
+        // Makes sure that the href="#" attached to the <a> elements
+        // don't scroll you back up the page.
+        $('body').on('click', 'a[href="#"]', function(event) {
+            event.preventDefault();
+        });
+    </script>
+
+</body>
+</html>
