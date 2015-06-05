@@ -90,8 +90,8 @@ that we can tell <tt class="docutils literal"><span class="pre">std::sort()</spa
 for sorting purposes. In the case of complex numbers, we might want to sort a vector
 of complex values according to their norm, or maybe to their real or imaginary component,
 depending on the context.</p>
-<p>The second option is to equip a type with an appropriate <tt class="docutils literal"><span class="pre">operator&lt;()</span></tt> implementation
-via <a class="reference external" href="http://en.wikipedia.org/wiki/Operator_overloading">operator overloading</a>. While for <tt class="docutils literal"><span class="pre">std::complex</span></tt> this is probably not a good idea
+<p>The second option is to equip the type with an appropriate <tt class="docutils literal"><span class="pre">operator&lt;()</span></tt> implementation.
+While for <tt class="docutils literal"><span class="pre">std::complex</span></tt> this is probably not a good idea
 (due to the lack of a &quot;natural&quot; ordering for complex numbers),
 for other types it is certainly an appropriate solution.</p>
 <p>Now, one of the challenges I faced with
@@ -175,10 +175,10 @@ let's say, an argument of type <tt class="docutils literal">double</tt>, the cal
 comes into play only when <tt class="docutils literal">T</tt> is a floating-point type, thus an <tt class="docutils literal">int</tt> argument will be forwarded to the
 unspecialised default <tt class="docutils literal">cos_impl</tt> functor. The unspecialised <tt class="docutils literal">cos_impl</tt> does not provide any call operator,
 and thus a compile-time error will arise. GCC 5.1 says:</p>
-<div class="highlight"><pre><span class="nv">$ </span>g++-5.1.0 -std<span class="o">=</span>c++11 cos.cpp
-<span class="o">[</span>...<span class="o">]</span>
-error: no matching <span class="k">function</span> <span class="k">for</span> call to ‘cos<span class="o">(</span>int<span class="o">)</span>’
-<span class="o">[</span>...<span class="o">]</span>
+<div class="highlight"><pre>$ g++-5.1.0 -std=c++11 cos.cpp
+[...]
+error: no matching function for call to ‘cos(int)’
+[...]
 </pre></div>
 <p>As you can see there is no reference in the error message about a missing call operator. The compiler actually
 complains that there is no <tt class="docutils literal">cos()</tt> function which takes an argument of type <tt class="docutils literal">int</tt>. What happens here is that
@@ -216,10 +216,10 @@ implement specific methods in order to be usable by our generic <tt class="docut
 They will only need to provide an additional specialisation of the implementation functor;</li>
 <li>the technique is SFINAE-friendly: in case the <tt class="docutils literal">cos_impl</tt> specialisation is missing, the <tt class="docutils literal">cos()</tt> function
 is removed from the overload resolution set;</li>
-<li>unlike with normal function overloading, we can specialise the behaviour not only based on concrete types, but
+<li>unlike with usual function overloading, we can specialise the behaviour not only based on concrete types, but
 on arbitrary compile-time <em>predicates</em>.</li>
 </ul>
-<p>The last point is, I think, particularily interesting. It is not unusal in scientific C++ libraries to see either</p>
+<p>The last point is, I think, particularly interesting. It is not unusual in scientific C++ libraries to see either</p>
 <ul class="simple">
 <li>heavy usage of macros to declare and define multiple overloads of the same function with different
 argument types (<tt class="docutils literal">float</tt>, <tt class="docutils literal">double</tt>, <tt class="docutils literal">long</tt>, etc.), or</li>
@@ -327,7 +327,7 @@ and in-place addition. Any type which supports these two operations (e.g., <tt c
 </pre></div>
 <p>What happens when we try to call the default implementation on a type which does not support addition, multiplication or
 assignment? Let's try an FMA on <tt class="docutils literal"><span class="pre">std::string</span></tt>:</p>
-<div class="highlight"><pre>error: no matching <span class="k">function</span> <span class="k">for</span> call to ‘multiply_accumulate<span class="o">(</span>std::string<span class="p">&amp;</span>, std::string<span class="p">&amp;</span>, std::string<span class="p">&amp;</span><span class="o">)</span>’
+<div class="highlight"><pre>error: no matching function for call to ‘multiply_accumulate(std::string&amp;, std::string&amp;, std::string&amp;)’
 </pre></div>
 <p>It looks like the <tt class="docutils literal">multiply_accumulate()</tt> function for <tt class="docutils literal"><span class="pre">std::string</span></tt> has been erased, and there is no reference to the missing
 <tt class="docutils literal">*</tt> operator for <tt class="docutils literal"><span class="pre">std::string</span></tt>. How does this happen? The answer is in the implementation of the call
@@ -342,8 +342,7 @@ operator in the default implementation of <tt class="docutils literal">multiply_
 expression <tt class="docutils literal">x += y * z</tt> is ill-formed, then the call operator is, under SFINAE rules, removed from the overload resolution set,
 and <tt class="docutils literal">multiply_accumulate_impl</tt> is effectively left without a call operator. The top-level <tt class="docutils literal">multiply_accumulate()</tt> function
 will then see, when called with <tt class="docutils literal"><span class="pre">std::string</span></tt> arguments, a <tt class="docutils literal">multiply_accumulate_impl</tt> functor with no call operator, and thus
-SFINAE rules will also remove the <tt class="docutils literal">multiply_accumulate()</tt> function from the overload resolution set. The compiler's error
-message lamenting the lack of a suitable <tt class="docutils literal">multiply_accumulate()</tt> function is thus explained. This also means that, even in the
+SFINAE rules will also remove the <tt class="docutils literal">multiply_accumulate()</tt> function from the overload resolution set. This also means that, even in the
 presence of a default implementation, it will still be possible to write a type trait to detect the availability
 of <tt class="docutils literal">multiply_accumulate()</tt>, in the same fashion as done above for <tt class="docutils literal">has_cosine</tt>.</p>
 </div>
@@ -363,7 +362,9 @@ is an <tt class="docutils literal">integer</tt> or a C++ integral type, then the
 the floating-point type and the result computed via <tt class="docutils literal"><span class="pre">std::pow()</span></tt>;</li>
 <li>if the two arguments are both C++ integral types, then the exact result is returned as an <tt class="docutils literal">integer</tt>.</li>
 </ul>
-<p>The implementation of Piranha's <tt class="docutils literal">pow()</tt> function is too long to be reproduced here. It is avaiable from the <a class="reference external" href="https://github.com/bluescarni/piranha/blob/4d600d04b48af3ce241d91d2f8f0fde45f822872/src/pow.hpp">Git repository</a> for the
+<p>Additional specialisations are implemented for Piranha's <tt class="docutils literal">real</tt> and <tt class="docutils literal">rational</tt> types (<tt class="docutils literal">real</tt> is a C++ wrapper around MPFR's <tt class="docutils literal">mpfr_t</tt> type,
+<tt class="docutils literal">rational</tt> an arbitrary-precision rational type built on top of <tt class="docutils literal">integer</tt>).</p>
+<p>The implementation of Piranha's <tt class="docutils literal">pow()</tt> function is too long to be reproduced here. It is available from the <a class="reference external" href="https://github.com/bluescarni/piranha/blob/4d600d04b48af3ce241d91d2f8f0fde45f822872/src/pow.hpp">Git repository</a> for the
 interested reader. As in the previous examples, the implementation is SFINAE-friendly and lends itself to compile-time introspection
 via a type trait.</p>
 </div>
