@@ -459,9 +459,9 @@ at maximum priority and with the system at rest. The processor is a quad-core In
 </table>
 <p>We can see how the static storage <tt class="docutils literal">integer</tt> provides a runtime speedup of about 2x with respect to the <tt class="docutils literal">mpz_t</tt> wrapper. It also uses
 about 10% less memory. The runtime performance of the dynamic storage <tt class="docutils literal">integer</tt> is essentially equivalent to the performance of the <tt class="docutils literal">mpz_t</tt> wrapper
-(~0.5% difference), but the memory utilisation goes up by about 14%. In this sense the test is not completely fair, as the forced conversion
+(~0.5% difference), but the memory utilisation goes up by about 14%. It should be noticed that, in this case, the test is not completely fair, as the forced conversion
 to dynamic storage in the second <tt class="docutils literal">integer</tt> test results in the unnecessary waste of the inline static storage. In a more realistic scenario,
-dynamic storage would kick in when at least 3 limbs are necessary to represent the value and thus the waste of the static storage would be
+dynamic storage would kick in when at least 3 limbs are necessary to represent the value and thus the waste of static storage would be
 proportionally smaller (one wasted static limb vs 3 dynamically allocated&nbsp;limbs).</p>
 <p>Another important point of caution in this type of test is that we are measuring not only the impact of the small integer optimisation on the memory subsystem, but,
 to some extent, also the performance of the multiprecision arithmetic implemented in <tt class="docutils literal">static_integer</tt>. <tt class="docutils literal">static_integer</tt> indeed cannot use <span class="caps">GMP</span> routines, and the basic
