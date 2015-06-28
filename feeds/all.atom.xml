@@ -1,0 +1,851 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Zig Zag Wanderer</title><link href="http://bluescarni.github.io/" rel="alternate"></link><link href="http://bluescarni.github.io/feeds/all.atom.xml" rel="self"></link><id>http://bluescarni.github.io/</id><updated>2015-06-27T16:46:40+02:00</updated><entry><title>Memory-friendly data structures in Piranha - 1/3</title><link href="http://bluescarni.github.io/memory-friendly-data-structures-in-piranha-13.html" rel="alternate"></link><updated>2015-06-27T16:46:40+02:00</updated><author><name>Francesco Biscani</name></author><id>tag:bluescarni.github.io,2015-06-27:memory-friendly-data-structures-in-piranha-13.html</id><summary type="html">&lt;div class="section" id="introduction"&gt;
+&lt;h2&gt;Introduction&lt;/h2&gt;
+&lt;p&gt;A significant trend in the evolution of computer hardware over the past few decades
+is the so-called &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Random-access_memory#Memory_wall"&gt;memory wall&lt;/a&gt;. This term commonly designates the growing discrepancy between
+the speed of the &lt;span class="caps"&gt;CPU&lt;/span&gt; and the speed of &lt;span class="caps"&gt;RAM&lt;/span&gt;: whereas &lt;span class="caps"&gt;CPU&lt;/span&gt; performance has kept a steady growth,
+the speed of &lt;span class="caps"&gt;RAM&lt;/span&gt; has increased at a much slower pace. As a consequence, modern CPUs can end
+up spending most of the time waiting for data to be delivered from the main memory (instead
+of doing useful&amp;nbsp;work).&lt;/p&gt;
+&lt;p&gt;One of the approaches adopted by hardware manufacturers to ameliorate the memory wall problem
+is that of equipping CPUs with &lt;a class="reference external" href="https://en.wikipedia.org/wiki/CPU_cache"&gt;cache memory&lt;/a&gt;. Cache memory is very fast (but very
+expensive and very small) memory residing directly on the &lt;span class="caps"&gt;CPU&lt;/span&gt;. Accessing data from the cache can be
+orders of magnitudes faster than loading data from &lt;span class="caps"&gt;RAM&lt;/span&gt;, and modern CPUs typically feature
+a complex multi-level hierarchy of caches. The efficient
+exploitation of the memory hierarchy has become today a fundamental aspect of performance&amp;nbsp;optimisation.&lt;/p&gt;
+&lt;p&gt;Although the implementation details of cache memory hierarchies vary across CPUs, there are
+two fundamental ideas that are broadly&amp;nbsp;applicable:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;&lt;em&gt;temporal locality&lt;/em&gt;: when data is loaded from &lt;span class="caps"&gt;RAM&lt;/span&gt; into the cache memory, it will be kept
+in the cache for some time (typically until it gets kicked out to make room for other data).
+It is thus important, once the data is in the cache, to try to run any computation that needs
+that data as soon as possible. It would be a waste to have the data removed from the cache,
+only to reload it later from &lt;span class="caps"&gt;RAM&lt;/span&gt; for further&amp;nbsp;processing;&lt;/li&gt;
+&lt;li&gt;&lt;em&gt;spatial locality&lt;/em&gt;: loading data from &lt;span class="caps"&gt;RAM&lt;/span&gt; into the cache typically proceeds by chunks. If
+some data is loaded from &lt;span class="caps"&gt;RAM&lt;/span&gt;, it is likely that also other contiguous data will
+be loaded in the cache at the same time. Memory structures, such as C arrays and C++ vectors,
+that store data contiguously are, in this sense, cache-friendly: by paying the price
+of loading an element of the vector into the cache, you also get a bunch of nearby elements
+for&amp;nbsp;free.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;It is important to note that not all computational workloads benefit from cache-friendly
+algorithms and data structures. An example in scientific computing is that of numerical
+integration of ODEs, which essentially consists of an iterative loop in which the state of
+the system is continuously updated. Normally, the ratio between the time spent moving and managing data
+(i.e., the state vector) and actually doing computations with that data is very small, and all the
+data needed for the computation fits in the cache&amp;nbsp;memory.&lt;/p&gt;
+&lt;p&gt;On the other hand, algorithms that employ large data structures can be particularly vulnerable to
+the memory wall. A classical example is linear algebra: when matrices and vectors are larger
+than the available cache memory, it becomes crucial to employ optimisations such as
+&lt;a class="reference external" href="https://en.wikipedia.org/wiki/Loop_nest_optimization"&gt;loop tiling&lt;/a&gt; in order to promote temporal locality and make sure that as much computation as possible
+is performed on data currently residing in&amp;nbsp;cache.&lt;/p&gt;
+&lt;p&gt;Sparse data structures are also problematic. In this context, with the admittedly-fuzzy &amp;quot;sparse&amp;quot; moniker
+I mean structures which feature one or more of the&amp;nbsp;following:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;frequent allocation of dynamic&amp;nbsp;memory,&lt;/li&gt;
+&lt;li&gt;non-contiguous data storage and/or&amp;nbsp;traversal,&lt;/li&gt;
+&lt;li&gt;pointer&amp;nbsp;chasing.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Trees, lists, hash tables, and many other data structures can be considered sparse according to this
+definition (at least in their most common implementations). The biggest problem with sparse structures is
+that the memory access pattern is unpredictable, and spatial locality is not&amp;nbsp;promoted.&lt;/p&gt;
+&lt;p&gt;One of the main focuses of &lt;a class="reference external" href="https://github.com/bluescarni/piranha"&gt;Piranha&lt;/a&gt; is the manipulation of very large algebraic objects, such as multivariate
+polynomials and Poisson series, commonly encountered in celestial mechanics.
+This is a computational workload in which large amounts of data are generated
+quickly from small input data. Take for instance the following symbolic&amp;nbsp;multiplication:&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+\left(1+x+y+2z^2+3t^3+5u^5\right)^{12} \times \left(1+u+t+2z^2+3y^3+5x^5\right)^{12}.
+\end{equation*}
+&lt;/div&gt;
+&lt;p&gt;Each multiplicand is a sparse multivariate polynomial with 6188 terms. The result, once fully expanded, will have 5821335 terms,
+thus requiring circa 1000 times the storage space of each multiplicand. Additionally, storage schemes for multivariate polynomial
+are typically sparse (dense storage is often appropriate for univariate polynomials, but it tends to be impractical
+for multivariate polynomials). Efficient exploitation of the memory hierarchy is thus one of the primary focuses (and sources of
+complications) in&amp;nbsp;Piranha.&lt;/p&gt;
+&lt;p&gt;In this series of posts, I will detail some of the strategies adopted in Piranha in order to maximise spatial locality. Specifically,
+I will be focusing on three foundational&amp;nbsp;components:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;an arbitrary-precision integer&amp;nbsp;class,&lt;/li&gt;
+&lt;li&gt;a small vector&amp;nbsp;class,&lt;/li&gt;
+&lt;li&gt;a cache-friendly hash&amp;nbsp;set.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The main theme in all three cases is that of minimising dynamic memory&amp;nbsp;allocation.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="the-integer-class"&gt;
+&lt;h2&gt;The &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; class&lt;/h2&gt;
+&lt;p&gt;Piranha, like most computer algebra systems, provides an arbitrary-precision integral type, surprisingly called &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt;.
+As the name suggests, and contrary to the builtin C++ integral types, &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; can represent any finite signed integral value, provided
+enough memory is&amp;nbsp;available.&lt;/p&gt;
+&lt;p&gt;The gold standard in arbitrary-precision arithmetic is the &lt;a class="reference external" href="https://gmplib.org/"&gt;&lt;span class="caps"&gt;GMP&lt;/span&gt; library&lt;/a&gt;, and most computer algebra libraries end up wrapping the
+&lt;span class="caps"&gt;GMP&lt;/span&gt; &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; struct, in one form or another. Piranha is no exception, and &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; is indeed (at least in part) a wrapped &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;One of the problems of the &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; type is that &lt;em&gt;any&lt;/em&gt; correctly initialised &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; ends up allocating dynamic memory, even if the
+stored value is zero or if it fits in one of the standard integral C++ types. This is not much of a concern when one is using &lt;span class="caps"&gt;GMP&lt;/span&gt; to do computations
+on gigantic integers, but it can be a problem when &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; is used to represent many not-so-large coefficients in a sparse multivariate
+polynomial (a typical occurrence in celestial mechanics computations). As explained above, dynamic memory allocation can be very detrimental
+to the performance of the memory&amp;nbsp;subsystem.&lt;/p&gt;
+&lt;p&gt;The &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; class in Piranha adopts then a small-value optimisation: if the value stored in the &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; is not too large, it will be
+stored directly in the static memory provided by the class itself, thus avoiding any dynamic allocation. When the stored value becomes large
+enough, the storage will be switched to a normal &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; struct.&lt;/p&gt;
+&lt;p&gt;There are many ways in which the small-value optimisation can be implemented, with different trade-offs between raw performance, memory utilisation
+and standard compliance. The solution adopted in Piranha aims to be fully standard-conforming, and exploits the capabilities of the new &lt;a class="reference external" href="https://en.wikipedia.org/wiki/C%2B%2B11#Unrestricted_unions"&gt;unrestricted unions&lt;/a&gt;
+available in&amp;nbsp;C++11.&lt;/p&gt;
+&lt;div class="section" id="anatomy-of-an-mpz-t"&gt;
+&lt;h3&gt;Anatomy of an &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;&lt;/h3&gt;
+&lt;p&gt;A &lt;span class="caps"&gt;GMP&lt;/span&gt; &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; is, conceptually, rather simple. On my computer, the struct is defined&amp;nbsp;as:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;typedef&lt;/span&gt; &lt;span class="k"&gt;struct&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;_mp_alloc&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;_mp_size&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="kt"&gt;mp_limb_t&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;_mp_d&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+
+&lt;span class="k"&gt;typedef&lt;/span&gt; &lt;span class="n"&gt;__mpz_struct&lt;/span&gt; &lt;span class="kt"&gt;mpz_t&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;];&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;(so &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; is actually an array of size 1 of &lt;tt class="docutils literal"&gt;__mpz_struct&lt;/tt&gt; - this is a common technique used to pass by reference in&amp;nbsp;C)&lt;/p&gt;
+&lt;p&gt;The exact types contained in the structure will vary across platforms, but the general idea is the&amp;nbsp;following:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;&lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; is a non-negative integral representing how many limbs are allocated. In an initialised &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; is never&amp;nbsp;zero;&lt;/li&gt;
+&lt;li&gt;&lt;tt class="docutils literal"&gt;_mp_size&lt;/tt&gt; is an integral corresponding to the number of limbs used to represent the value. If &lt;tt class="docutils literal"&gt;_mp_size&lt;/tt&gt; is zero,
+then the stored value is zero, if &lt;tt class="docutils literal"&gt;_mp_size&lt;/tt&gt; is positive then the stored value is positive, and if &lt;tt class="docutils literal"&gt;_mp_size&lt;/tt&gt; is negative then the stored value
+is negative. The absolute value of &lt;tt class="docutils literal"&gt;_mp_size&lt;/tt&gt; is never greater than &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt;;&lt;/li&gt;
+&lt;li&gt;&lt;tt class="docutils literal"&gt;_mp_d&lt;/tt&gt; is a pointer to a dynamically-allocated array of&amp;nbsp;limbs.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In the &lt;span class="caps"&gt;GMP&lt;/span&gt; jargon, a limb is an unsigned integral value (typically of type &lt;tt class="docutils literal"&gt;unsigned long&lt;/tt&gt; or &lt;tt class="docutils literal"&gt;unsigned long long&lt;/tt&gt;)
+which represents a &amp;quot;chunk&amp;quot; of the number in binary form (exactly in the same way as a digit from 0 to 9 represents a chunk of a number in decimal form).
+The least significant chunks of a number are stored first in an &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;As an example, consider the number -173, which is represented in binary&amp;nbsp;as&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+-10101101.
+\end{equation*}
+&lt;/div&gt;
+&lt;p&gt;On a hypothetical 4-bit architecture, we can divide the absolute value of this number into the two 4-bit&amp;nbsp;limbs:&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+\left[ 1101, 1010 \right].
+\end{equation*}
+&lt;/div&gt;
+&lt;p&gt;Notice how the least-significant chunk, 1101, is stored first. Then a valid &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; representation of this number will have &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; set to at least 2, &lt;tt class="docutils literal"&gt;_mp_size&lt;/tt&gt;
+will be set to -2 (as the number is negative), and &lt;tt class="docutils literal"&gt;_mp_d&lt;/tt&gt; will be a pointer to a dynamically allocated array of limbs of size &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; containing the values 13
+(which is 1101 in decimal form) and 10 (which is 1010 in decimal form). The absolute value of the number can be reconstructed from the limbs via additions and multiplications
+by powers of&amp;nbsp;two:&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+173 = 13 + 10 \cdot 2^4.
+\end{equation*}
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="a-static-counterpart-to-mpz-t"&gt;
+&lt;h3&gt;A static counterpart to &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;&lt;/h3&gt;
+&lt;p&gt;In order to implement the small-value optimisation, Piranha first introduces a class called &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; which looks more or less like&amp;nbsp;this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;static_integer&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;_mp_alloc&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;_mp_size&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;mp_limb_t&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;m_limbs&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;(this is a simplified version, the real logic in the selection of the types in the class is more complicated - but this is not relevant for this&amp;nbsp;discussion)&lt;/p&gt;
+&lt;p&gt;&lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; looks very similar to &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;: the first two members are the same, but the third member has now become an &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::array&lt;/span&gt;&lt;/tt&gt; of 2 limbs.
+The &lt;tt class="docutils literal"&gt;m_limbs&lt;/tt&gt; member will be used to store values whose magnitude is not greater than two limbs (e.g., on a 64-bit architecture &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; can store
+absolute values from &lt;span class="math"&gt;\(0\)&lt;/span&gt; to &lt;span class="math"&gt;\(2^{128} - 1\)&lt;/span&gt;). The important point  is that &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::array&lt;/span&gt;&lt;/tt&gt; does not allocate dynamic memory, and thus operating on a &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;
+is more cache-friendly than operating on an &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;: there is no pointer chasing, and a single memory load will probably be enough to transfer the data from &lt;span class="caps"&gt;RAM&lt;/span&gt;
+into the&amp;nbsp;cache.&lt;/p&gt;
+&lt;p&gt;On its own, the &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; class has a limited range and it is not very useful: we have merely extended the numerical range with respect to the
+builtin C++ integral types. We will need to couple it to an &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; in order to create a true multiprecision&amp;nbsp;integer.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="merging-static-and-dynamic"&gt;
+&lt;h3&gt;Merging static and&amp;nbsp;dynamic&lt;/h3&gt;
+&lt;p&gt;Now comes the crucial part. We need to merge in a single entity the &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; struct and &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;: as long as the value we are representing is sufficiently
+small, we will be exploiting the inline storage of &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;; when the value becomes too large, we will switch to the dynamic storage of a standard &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;The natural tool to implement this merged entity is, in C++, a &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Union_type"&gt;union&lt;/a&gt;. Before C++11, unions used to be fairly limited. Specifically, it was not possible to store
+in a union any non-&lt;a class="reference external" href="http://en.cppreference.com/w/cpp/concept/PODType"&gt;&lt;span class="caps"&gt;POD&lt;/span&gt;&lt;/a&gt; (plain old data) type. In C++11, this restriction has been&amp;nbsp;lifted.&lt;/p&gt;
+&lt;p&gt;The merged union in Piranha&amp;#8217;s &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; type looks simply like&amp;nbsp;this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;union&lt;/span&gt; &lt;span class="n"&gt;integer_union&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="n"&gt;static_integer&lt;/span&gt; &lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="n"&gt;__mpz_struct&lt;/span&gt; &lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The management of a union in C/C++ rests completely on the shoulders of the developer. For instance, the developer must manually call the constructors and destructors
+of the union members whenever it is needed to switch from one active member to the other (in C, it is sufficient to write into a member to make that member&amp;nbsp;active).&lt;/p&gt;
+&lt;p&gt;Additionally, there is no way specified by the language to detect which element
+of the union is the active one. It is thus common to include the union as a member of a wrapping class which adds an extra member representing which element
+of the union is currently active. According to this model, the &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; class would then look like&amp;nbsp;this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;integer&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="n"&gt;integer_union&lt;/span&gt; &lt;span class="n"&gt;m_union&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="kt"&gt;bool&lt;/span&gt; &lt;span class="n"&gt;m_tag&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The &lt;tt class="docutils literal"&gt;m_tag&lt;/tt&gt; member will be used to record which of the two members of the union is currently active. The developer has to take care of updating the tag each time
+the active member of the union is&amp;nbsp;switched.&lt;/p&gt;
+&lt;p&gt;It turns out that in this specific case we can avoid adding such a tagging member (which adds a noticeable size overhead due to padding).
+The &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; class exploits a special rule in the standard (section 9.2) which essentially
+states the following: if the members of a union share a common initial sequence of members, then it is legal to access such initial sequence from any member of the union (note
+that the actual rule is slightly more complicated, but it does not matter here). &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; and the &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; struct do indeed share such a common initial&amp;nbsp;sequence:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;_mp_alloc&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;_mp_size&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;These two members are present at the beginning of both &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;. Under the special rule quoted above, the following is then&amp;nbsp;legal:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;integer_union&lt;/span&gt; &lt;span class="n"&gt;u&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt; &lt;span class="c1"&gt;// This will intialise either the static or the dynamic member,&lt;/span&gt;
+                 &lt;span class="c1"&gt;// depending on the default constructor of the union.&lt;/span&gt;
+&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;cout&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;u&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_alloc&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="sc"&gt;&amp;#39;\n&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;cout&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;u&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_alloc&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="sc"&gt;&amp;#39;\n&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;That is, we can access the &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; member common to both elements of the union either from &lt;tt class="docutils literal"&gt;m_st&lt;/tt&gt; or &lt;tt class="docutils literal"&gt;m_dy&lt;/tt&gt;, and we will fetch exactly the same&amp;nbsp;value.&lt;/p&gt;
+&lt;p&gt;If now we recall that &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; is guaranteed to be nonzero in a correctly initialised &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;, it should be evident that we can
+use the &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; member as our tagging mechanism, instead of an ad-hoc &lt;tt class="docutils literal"&gt;m_tag&lt;/tt&gt; member: if &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; is zero, then the active member of the union is
+the &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;, otherwise the active member is the &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt;. This allows us to roll the tagging mechanism directly into the union, and to save memory&amp;nbsp;space.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="bells-and-whistles"&gt;
+&lt;h3&gt;Bells and&amp;nbsp;whistles&lt;/h3&gt;
+&lt;p&gt;Now that the basic principles are laid out, we can take a brief look at some of the basic functionality in the &lt;tt class="docutils literal"&gt;integer_union&lt;/tt&gt; object. Let us start by introducing
+a convenience method to determine which union member is currently&amp;nbsp;active:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="kt"&gt;bool&lt;/span&gt; &lt;span class="n"&gt;is_static&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_alloc&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;As explained above, we have adopted the convention that if the &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; member is zero then &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; is active. We can inspect the &lt;tt class="docutils literal"&gt;_mp_alloc&lt;/tt&gt; member
+via both &lt;tt class="docutils literal"&gt;m_st&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;m_dy&lt;/tt&gt;, thanks to the special rule involving common initial sequences in union members. Easy&amp;nbsp;peasy.&lt;/p&gt;
+&lt;p&gt;It is convenient to provide two getters that check, via assertions on &lt;tt class="docutils literal"&gt;is_static()&lt;/tt&gt;, whether we are accessing the active member or&amp;nbsp;not:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;static_integer&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;g_st&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="n"&gt;assert&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;is_static&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="n"&gt;__mpz_struct&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="n"&gt;assert&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;is_static&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;(I have omitted the &lt;tt class="docutils literal"&gt;const&lt;/tt&gt; counterparts for brevity) Now, in debug builds, the assertions will fire if we are accessing the inactive union member via
+&lt;tt class="docutils literal"&gt;g_st()&lt;/tt&gt; or &lt;tt class="docutils literal"&gt;g_dy()&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;Next, the default constructor for the&amp;nbsp;union:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;integer_union&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Pretty straightforward: a default-constructed union will activate the static member via the default constructor of &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;The copy constructor is more&amp;nbsp;interesting:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;integer_union&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;integer_union&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_static&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;static_integer&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_st&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;mpz_init_set&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Here we need first to determine whether &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; is stored in static storage or not, and then we initialise the union accordingly. We need to use the placement &lt;tt class="docutils literal"&gt;new&lt;/tt&gt; syntax
+in order to construct either a &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; or an &lt;tt class="docutils literal"&gt;__mpz_struct&lt;/tt&gt; at the address of either union member. In case &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; is storing an &lt;tt class="docutils literal"&gt;__mpz_struct&lt;/tt&gt;, we also need
+to call the &lt;span class="caps"&gt;GMP&lt;/span&gt; function &lt;tt class="docutils literal"&gt;mpz_init_set()&lt;/tt&gt; in order to copy-initialise the dynamic member with the contents of &lt;tt class="docutils literal"&gt;other&lt;/tt&gt;. Note that here the&amp;nbsp;line&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;is most likely superfluous: &lt;tt class="docutils literal"&gt;__mpz_struct&lt;/tt&gt; is a C struct, thus its lifetime officially begins in the following line, where we write
+into &lt;tt class="docutils literal"&gt;m_dy&lt;/tt&gt; via the &lt;span class="caps"&gt;GMP&lt;/span&gt; function. The line above will be optimised out by the compiler, but I like to keep it in the source code for consistency and to remind myself
+of how unrestricted unions are supposed to work in the general&amp;nbsp;case.&lt;/p&gt;
+&lt;p&gt;The move&amp;nbsp;constructor:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;integer_union&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;integer_union&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_static&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;static_integer&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;move&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_st&lt;/span&gt;&lt;span class="p"&gt;()));&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+        &lt;span class="n"&gt;move_ctor_mpz&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+        &lt;span class="c1"&gt;// Downgrade the other to an empty static.&lt;/span&gt;
+        &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;static_integer&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Here &lt;tt class="docutils literal"&gt;move_ctor_mpz()&lt;/tt&gt; is a helper function that performs a shallow copy from one &lt;tt class="docutils literal"&gt;__mpz_struct&lt;/tt&gt; to&amp;nbsp;another:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="nf"&gt;move_ctor_mpz&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;__mpz_struct&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;__mpz_struct&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_alloc&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_alloc&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_size&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_size&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_d&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;_mp_d&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The move constructor follows the same pattern as the copy constructor. One difference is that if &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; is dynamic, then we must make
+sure that, after the move, &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; is still in a valid state (in this context, we consider an object in a &lt;em&gt;valid&lt;/em&gt; state if it is destructible
+and assignable). Indeed the members of &lt;tt class="docutils literal"&gt;other.m_dy&lt;/tt&gt; have been copied over to &lt;tt class="docutils literal"&gt;this&lt;/tt&gt;, which, in particular, is now managing the pointer to the
+dynamically allocated array of limbs in the &lt;tt class="docutils literal"&gt;__mpz_struct&lt;/tt&gt; of &lt;tt class="docutils literal"&gt;other&lt;/tt&gt;. In order to leave &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; in a valid state, we first destroy its dynamic member&amp;nbsp;with&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;and then we construct an empty &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; with&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;static_integer&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Now &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; has been switched over to static storage and it is in a well-defined valid&amp;nbsp;state.&lt;/p&gt;
+&lt;p&gt;The destructor of &lt;tt class="docutils literal"&gt;integer_union&lt;/tt&gt; is straightforwardly implemented&amp;nbsp;as:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;integer_union&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;is_static&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="n"&gt;g_st&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;static_integer&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;mpz_clear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+        &lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;That is, if the storage is static, call the destructor of &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;, otherwise first clear (via &lt;tt class="docutils literal"&gt;mpz_clear()&lt;/tt&gt;) and then destroy the &lt;tt class="docutils literal"&gt;__mpz_struct&lt;/tt&gt;.
+Here, again, the&amp;nbsp;line&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;is superfluous and it will be optimised out by the&amp;nbsp;compiler.&lt;/p&gt;
+&lt;p&gt;As a last example, let us take a look at the copy assignment&amp;nbsp;operator:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;integer_union&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;operator&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;integer_union&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;this&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="k"&gt;this&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+    &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="kt"&gt;bool&lt;/span&gt; &lt;span class="n"&gt;s1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;is_static&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;s2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_static&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;s1&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;s2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="n"&gt;g_st&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_st&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;s1&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;s2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="c1"&gt;// Destroy static.&lt;/span&gt;
+        &lt;span class="n"&gt;g_st&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;static_integer&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+        &lt;span class="c1"&gt;// Construct the dynamic struct.&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+        &lt;span class="c1"&gt;// Init + assign the mpz.&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;mpz_init_set&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;s1&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;s2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="c1"&gt;// Destroy the dynamic this.&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;mpz_clear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+        &lt;span class="n"&gt;m_dy&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;__mpz_struct&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+        &lt;span class="c1"&gt;// Init-copy the static from other.&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;static_cast&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;m_st&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="n"&gt;static_integer&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_st&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;mpz_set&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;g_dy&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="k"&gt;this&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;This code is noticeably more complex than the constructors. After the customary check for self-assignment, we need to distinguish four&amp;nbsp;cases:&lt;/p&gt;
+&lt;ol class="arabic simple"&gt;
+&lt;li&gt;both &lt;tt class="docutils literal"&gt;this&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; use static&amp;nbsp;storage,&lt;/li&gt;
+&lt;li&gt;&lt;tt class="docutils literal"&gt;this&lt;/tt&gt; uses static storage, &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; uses dynamic&amp;nbsp;storage,&lt;/li&gt;
+&lt;li&gt;&lt;tt class="docutils literal"&gt;this&lt;/tt&gt; uses dynamic storage, &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; uses static&amp;nbsp;storage,&lt;/li&gt;
+&lt;li&gt;both &lt;tt class="docutils literal"&gt;this&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;other&lt;/tt&gt; use dynamic&amp;nbsp;storage.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;When the storage types differ, we will need to switch &lt;tt class="docutils literal"&gt;this&lt;/tt&gt; to the storage type of &lt;tt class="docutils literal"&gt;other&lt;/tt&gt;.
+This is accomplished by manually calling the destructors and constructors of the union members, similarly to how it is done in the constructors
+of the union. Otherwise, we can perform a direct assignment, either via the copy assignment operator of &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; or the &lt;span class="caps"&gt;GMP&lt;/span&gt; function
+&lt;tt class="docutils literal"&gt;mpz_set()&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;The complexity in the assignment operator derives from the fact that it is a binary operation. If we had to code a ternary operation,
+we would need to handle &lt;span class="math"&gt;\(2^3=8\)&lt;/span&gt; different cases. Thankfully, ternary operations are exceedingly&amp;nbsp;rare.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="performance-measurements"&gt;
+&lt;h3&gt;Performance&amp;nbsp;measurements&lt;/h3&gt;
+&lt;p&gt;In order to evaluate the performance impact of the small integer optimisation, I will use a slightly modified version of a &lt;a class="reference external" href="https://github.com/bluescarni/piranha/blob/master/tests/pearce2_perf.cpp"&gt;benchmark&lt;/a&gt; available
+in Piranha&amp;#8217;s test suite.&amp;nbsp;Given&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+f = \left(1+x+y+2z^2+3t^3+5u^5\right)^{16}
+\end{equation*}
+&lt;/div&gt;
+&lt;p&gt;and&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+g = \left(1+u+t+2z^2+3y^3+5x^5\right)^{16},
+\end{equation*}
+&lt;/div&gt;
+&lt;p&gt;we will calculate the fully-expanded form&amp;nbsp;of&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+f\times g.
+\end{equation*}
+&lt;/div&gt;
+&lt;p&gt;The result will contain 28398035 (that is, circa 28 million) terms. The test will be run in three different&amp;nbsp;configurations:&lt;/p&gt;
+&lt;ol class="arabic simple"&gt;
+&lt;li&gt;with &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; coefficients,&lt;/li&gt;
+&lt;li&gt;with &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; coefficients forcibly switched to dynamic&amp;nbsp;storage,&lt;/li&gt;
+&lt;li&gt;with &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; coefficients, via the wrapper provided by the &lt;a class="reference external" href="http://www.boost.org/doc/libs/release/libs/multiprecision/doc/html/index.html"&gt;Boost.Multiprecision&lt;/a&gt; (&lt;span class="caps"&gt;BMP&lt;/span&gt;)&amp;nbsp;library.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;On my machine, all the coefficients of the result will fit in a &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;. The idea of the first test is thus
+to measure the performance of &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; in the best possible scenario, where dynamic storage will never be used. The second test
+is instead meant to measure the performance of dynamic storage. Finally, the last test is meant to provide
+a comparison with respect to a vanilla &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; wrapper.
+All tests were run in single-threaded mode (although Piranha does support parallel
+polynomial multiplication, I preferred to leave parallelisation out for this test). The tests were run on a 64-bit Linux workstation
+at maximum priority and with the system at rest. The processor is a quad-core Intel i5 2500, supported by &lt;span class="caps"&gt;16GB&lt;/span&gt; of &lt;span class="caps"&gt;DDR3&lt;/span&gt; &lt;span class="caps"&gt;RAM&lt;/span&gt;.&lt;/p&gt;
+&lt;p&gt;The results, averaged over three separate runs for each test, are the&amp;nbsp;following:&lt;/p&gt;
+&lt;table border="1" class="docutils"&gt;
+&lt;colgroup&gt;
+&lt;col width="60%" /&gt;
+&lt;col width="17%" /&gt;
+&lt;col width="23%" /&gt;
+&lt;/colgroup&gt;
+&lt;thead valign="bottom"&gt;
+&lt;tr&gt;&lt;th class="head"&gt;Configuration&lt;/th&gt;
+&lt;th class="head"&gt;Time (s)&lt;/th&gt;
+&lt;th class="head"&gt;Memory (&lt;span class="caps"&gt;GB&lt;/span&gt;)&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td&gt;&lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; (static storage)&lt;/td&gt;
+&lt;td&gt;9.94&lt;/td&gt;
+&lt;td&gt;2.86&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; (dynamic storage)&lt;/td&gt;
+&lt;td&gt;20.41&lt;/td&gt;
+&lt;td&gt;3.66&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; wrapper&lt;/td&gt;
+&lt;td&gt;20.51&lt;/td&gt;
+&lt;td&gt;3.20&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;We can see how the static storage &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; provides a runtime speedup of about 2x with respect to the &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; wrapper. It also uses
+about 10% less memory. The runtime performance of the dynamic storage &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; is essentially equivalent to the performance of the &lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; wrapper
+(~0.5% difference), but the memory utilisation goes up by about 14%. It should be noticed that, in this case, the test is not completely fair, as the forced conversion
+to dynamic storage in the second &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; test results in the unnecessary waste of the inline static storage. In a more realistic scenario,
+dynamic storage would kick in when at least 3 limbs are necessary to represent the value and thus the waste of static storage would be
+proportionally smaller (one wasted static limb vs 3 dynamically allocated&amp;nbsp;limbs).&lt;/p&gt;
+&lt;p&gt;Another important point of caution in this type of test is that we are measuring not only the impact of the small integer optimisation on the memory subsystem, but,
+to some extent, also the performance of the multiprecision arithmetic implemented in &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;. &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt; indeed cannot use &lt;span class="caps"&gt;GMP&lt;/span&gt; routines, and the basic
+multiprecision arithmetic operations have thus been implemented from scratch. With respect to the &lt;span class="caps"&gt;GMP&lt;/span&gt; routines, the arithmetic functions for &lt;tt class="docutils literal"&gt;static_integer&lt;/tt&gt;
+are somewhat simplified: they just employ &amp;quot;naive&amp;quot; (i.e., schoolbook) multiprecision arithmetic, and they exploit the fact that, by construction, the number of limbs can never
+exceed 2. These simplifications are likely to have a non-negligible impact on the&amp;nbsp;timings.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="conclusions"&gt;
+&lt;h3&gt;Conclusions&lt;/h3&gt;
+&lt;p&gt;The small value optimisation in Piranha&amp;#8217;s &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; class can lead to substantial improvements, both in runtime and in memory utilisation, over a straightforward
+&lt;tt class="docutils literal"&gt;mpz_t&lt;/tt&gt; wrapper when multiplying very large and very sparse multivariate polynomials. The implementation employs the newly-introduced C++11 unrestricted unions,
+and it exploits a special ruling in the standard that allows to embed the tagging logic directly in the members, thus avoiding the memory overhead
+typically associated to the runtime management of unions. The management of the lifetime of the union members happens via explicit calls to constructors and destructors,
+and it needs to be carefully orchestrated in order to avoid accessing the inactive member of the union (thus incurring in undefined behaviour).
+The full source code the the &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; class is available &lt;a class="reference external" href="https://github.com/bluescarni/piranha/blob/master/src/mp_integer.hpp"&gt;here&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;In the next installment of this series, I will focus on a &lt;tt class="docutils literal"&gt;small_vector&lt;/tt&gt; class used in Piranha to represent vectors of integral exponents in&amp;nbsp;monomials.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;script type='text/javascript'&gt;if (!document.getElementById('mathjaxscript_pelican_#%@#$@#')) {
+    var align = "center",
+        indent = "0em",
+        linebreak = "false";
+
+    if (false) {
+        align = (screen.width &lt; 768) ? "left" : align;
+        indent = (screen.width &lt; 768) ? "0em" : indent;
+        linebreak = (screen.width &lt; 768) ? 'true' : linebreak;
+    }
+    
+    var mathjaxscript = document.createElement('script');
+    mathjaxscript.id = 'mathjaxscript_pelican_#%@#$@#';
+    mathjaxscript.type = 'text/javascript';
+    mathjaxscript.src = '//cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML';
+    mathjaxscript[(window.opera ? "innerHTML" : "text")] =
+        "MathJax.Hub.Config({" +
+        "    config: ['MMLorHTML.js']," +
+        "    TeX: { extensions: ['AMSmath.js','AMSsymbols.js','noErrors.js','noUndefined.js'], equationNumbers: { autoNumber: 'AMS' } }," +
+        "    jax: ['input/TeX','input/MathML','output/HTML-CSS']," +
+        "    extensions: ['tex2jax.js','mml2jax.js','MathMenu.js','MathZoom.js']," +
+        "    displayAlign: '"+ align +"'," +
+        "    displayIndent: '"+ indent +"'," +
+        "    showMathMenu: true," +
+        "    tex2jax: { " +
+        "        inlineMath: [ ['\\\\(','\\\\)'] ], " +
+        "        displayMath: [ ['$$','$$'] ]," +
+        "        processEscapes: true," +
+        "        preview: 'TeX'," +
+        "    }, " +
+        "    'HTML-CSS': { " +
+        "        styles: { '.MathJax_Display, .MathJax .mo, .MathJax .mi, .MathJax .mn': {color: 'inherit ! important'} }," +
+        "        linebreaks: { automatic: "+ linebreak +", width: '90% container' }," +
+        "    }, " +
+        "}); " +
+        "if ('default' !== 'default') {" +
+            "MathJax.Hub.Register.StartupHook('HTML-CSS Jax Ready',function () {" +
+                "var VARIANT = MathJax.OutputJax['HTML-CSS'].FONTDATA.VARIANT;" +
+                "VARIANT['normal'].fonts.unshift('MathJax_default');" +
+                "VARIANT['bold'].fonts.unshift('MathJax_default-bold');" +
+                "VARIANT['italic'].fonts.unshift('MathJax_default-italic');" +
+                "VARIANT['-tex-mathit'].fonts.unshift('MathJax_default-italic');" +
+            "});" +
+            "MathJax.Hub.Register.StartupHook('SVG Jax Ready',function () {" +
+                "var VARIANT = MathJax.OutputJax.SVG.FONTDATA.VARIANT;" +
+                "VARIANT['normal'].fonts.unshift('MathJax_default');" +
+                "VARIANT['bold'].fonts.unshift('MathJax_default-bold');" +
+                "VARIANT['italic'].fonts.unshift('MathJax_default-italic');" +
+                "VARIANT['-tex-mathit'].fonts.unshift('MathJax_default-italic');" +
+            "});" +
+        "}";
+    (document.body || document.getElementsByTagName('head')[0]).appendChild(mathjaxscript);
+}
+&lt;/script&gt;</summary><category term="c++"></category><category term="coding"></category><category term="piranha"></category></entry><entry><title>Overloading overloaded</title><link href="http://bluescarni.github.io/overloading-overloaded.html" rel="alternate"></link><updated>2015-06-13T02:30:49+02:00</updated><author><name>Francesco Biscani</name></author><id>tag:bluescarni.github.io,2015-06-13:overloading-overloaded.html</id><summary type="html">&lt;div class="section" id="introduction-and-motivation"&gt;
+&lt;h2&gt;Introduction and&amp;nbsp;motivation&lt;/h2&gt;
+&lt;p&gt;The fundamental idea of generic programming is that
+of writing classes, algorithms and functions able to
+operate on arbitrary types. In the jargon of modern C++, one says that
+a software component defines a &lt;em&gt;concept&lt;/em&gt; (i.e., a set of requirements)
+of which a type &lt;tt class="docutils literal"&gt;T&lt;/tt&gt; must be a &lt;em&gt;model&lt;/em&gt; in order for &lt;tt class="docutils literal"&gt;T&lt;/tt&gt; to be usable
+with that&amp;nbsp;component.&lt;/p&gt;
+&lt;p&gt;Take for instance the &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::sort()&lt;/span&gt;&lt;/tt&gt; function from the standard C++ library.
+One of its prototypes &lt;a class="reference external" href="http://en.cppreference.com/w/cpp/algorithm/sort"&gt;reads&lt;/a&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;RandomIt&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="n"&gt;sort&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;RandomIt&lt;/span&gt; &lt;span class="n"&gt;first&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;RandomIt&lt;/span&gt; &lt;span class="n"&gt;last&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Among others, one of the requirements stipulated by &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::sort()&lt;/span&gt;&lt;/tt&gt; is that
+the value type of &lt;tt class="docutils literal"&gt;RandomIt&lt;/tt&gt; (that is, the type we are sorting) must be equipped
+with a less-than operator (&lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::sort()&lt;/span&gt;&lt;/tt&gt; is a &lt;a class="reference external" href="http://en.wikipedia.org/wiki/Comparison_sort"&gt;comparison sort&lt;/a&gt;).
+It is thus possible to sort out-of-the-box, for instance, vectors of integers
+or floating point values (&lt;a class="reference external" href="http://stackoverflow.com/questions/14784263/stdout-of-range-during-stdsort-with-custom-comparator"&gt;disregarding NaNs&lt;/a&gt; for a second). It will not however
+be possible to sort instances of &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::complex&lt;/span&gt;&lt;/tt&gt;, as &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;operator&amp;lt;()&lt;/span&gt;&lt;/tt&gt; is not implemented
+for these types (C++ wisely does not get into the business of defining an ordering relation
+for complex&amp;nbsp;numbers).&lt;/p&gt;
+&lt;p&gt;If the type we are sorting does not provide an &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;operator&amp;lt;()&lt;/span&gt;&lt;/tt&gt;, we have a couple of possible&amp;nbsp;options.&lt;/p&gt;
+&lt;p&gt;The first option is to use the other version of &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::sort()&lt;/span&gt;&lt;/tt&gt; provided by the standard library,
+which&amp;nbsp;reads:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;RandomIt&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Compare&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="n"&gt;sort&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;RandomIt&lt;/span&gt; &lt;span class="n"&gt;first&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;RandomIt&lt;/span&gt; &lt;span class="n"&gt;last&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;Compare&lt;/span&gt; &lt;span class="n"&gt;comp&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Here the additional parameter &lt;tt class="docutils literal"&gt;comp&lt;/tt&gt; must be a function-like object able to compare
+instances of the value type according to some strict weak ordering relation
+(here are the &lt;a class="reference external" href="http://en.cppreference.com/w/cpp/concept/Compare"&gt;gory details&lt;/a&gt; in their standardese glory). This basically means
+that we can tell &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::sort()&lt;/span&gt;&lt;/tt&gt; &lt;em&gt;how&lt;/em&gt; instances of the value type should be compared
+for sorting purposes. In the case of complex numbers, we might want to sort a vector
+of complex values according to their norm, or maybe to their real or imaginary component,
+depending on the&amp;nbsp;context.&lt;/p&gt;
+&lt;p&gt;The second option is to equip the type with an appropriate &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;operator&amp;lt;()&lt;/span&gt;&lt;/tt&gt; implementation.
+While for &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::complex&lt;/span&gt;&lt;/tt&gt; this is probably not a good idea
+(due to the lack of a &amp;quot;natural&amp;quot; ordering for complex numbers),
+for other types it is certainly an appropriate&amp;nbsp;solution.&lt;/p&gt;
+&lt;p&gt;Now, one of the challenges I faced with
+&lt;a class="reference external" href="https://github.com/bluescarni/piranha"&gt;Piranha&lt;/a&gt; was related to the design of a generic and user-extensible
+library of mathematical functions. As a simple example, consider the&amp;nbsp;expression&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+\frac{1}{2}x\cos\left(\alpha+\beta\right).
+\end{equation*}
+&lt;/div&gt;
+&lt;p&gt;This is a &lt;a class="reference external" href="http://www.sciencedirect.com/science/article/pii/S0747717100903961"&gt;Poisson series&lt;/a&gt; that Piranha can represent symbolically. In order to evaluate
+this expression for specific numerical values of the variables &lt;span class="math"&gt;\(x\)&lt;/span&gt;, &lt;span class="math"&gt;\(\alpha\)&lt;/span&gt;
+and &lt;span class="math"&gt;\(\beta\)&lt;/span&gt;, we need to be able to compute the cosine of those numerical values.
+The way in which the cosine is computed will depend on the type we use for evaluation:
+if we use standard C++ floating-point types (&lt;tt class="docutils literal"&gt;float&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;double&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;long double&lt;/tt&gt;),
+we probably want to use the standard &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::cos()&lt;/span&gt;&lt;/tt&gt; function. But, if we need more precision,
+we might implement a custom multiple-precision floating-point type (or, more likely, write a C++
+wrapper around &lt;a class="reference external" href="http://www.mpfr.org/"&gt;&lt;span class="caps"&gt;MPFR&lt;/span&gt;&lt;/a&gt;). We are then faced with the task of informing Piranha about
+&lt;em&gt;how&lt;/em&gt; to evaluate the cosine function for our brand new multiprecision floating-point&amp;nbsp;type.&lt;/p&gt;
+&lt;p&gt;A possible solution to this problem is to use the the mechanism of &lt;a class="reference external" href="http://en.wikipedia.org/wiki/Function_overloading"&gt;function overloading&lt;/a&gt;. However,
+an overloading-based approach suffers from a few shortcomings. For starters,
+the &lt;a class="reference external" href="http://en.cppreference.com/w/cpp/language/overload_resolution"&gt;overloading rules&lt;/a&gt; in C++ are notoriously complicated. The interactions between
+function overloads, templates, and specialisations can often be counterintuitive, as explained
+in this classic &lt;a class="reference external" href="http://www.gotw.ca/publications/mill17.htm"&gt;GotW&lt;/a&gt; by Herb Sutter. Function overloading is also sensitive to declaration
+order and interacts with implicit&amp;nbsp;conversions.&lt;/p&gt;
+&lt;p&gt;Piranha aims to be a completely generic system, open to extensions via user-defined custom types
+(such as the hypothetical multiprecision floating-point type above) the core library knows nothing
+about. After some initial
+experiments, it became clear that a purely overloading-based solution was not good enough
+to realise this goal and that an alternative approach was&amp;nbsp;necessary.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="a-generic-cos-implementation"&gt;
+&lt;h2&gt;A generic &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; implementation&lt;/h2&gt;
+&lt;p&gt;The solution adopted in Piranha starts from where the aforementioned &lt;a class="reference external" href="http://www.gotw.ca/publications/mill17.htm"&gt;GotW&lt;/a&gt; ends. There is a single
+generic &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function in the &lt;tt class="docutils literal"&gt;math&lt;/tt&gt; sub-namespace which looks like&amp;nbsp;this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;namespace&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+
+&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="kr"&gt;inline&lt;/span&gt; &lt;span class="k"&gt;auto&lt;/span&gt; &lt;span class="n"&gt;cos&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cos_impl&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;cos_impl&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The function forwards the computation to an helper template class called &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt;, which is parametrised
+over the type &lt;tt class="docutils literal"&gt;T&lt;/tt&gt; of the argument &lt;tt class="docutils literal"&gt;x&lt;/tt&gt; and expected to provide a call operator to which the original
+argument &lt;tt class="docutils literal"&gt;x&lt;/tt&gt; is passed. The return type of &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; is automatically deduced from the call operator
+of &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt;. The default implementation of &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; is an empty&amp;nbsp;class:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;namespace&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+
+&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kt"&gt;void&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="n"&gt;cos_impl&lt;/span&gt;
+&lt;span class="p"&gt;{};&lt;/span&gt;
+
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The second &amp;quot;ghost&amp;quot; template parameter, unnamed and defaulting to &lt;tt class="docutils literal"&gt;void&lt;/tt&gt;, is there to allow the use of
+the &lt;a class="reference external" href="http://en.cppreference.com/w/cpp/types/enable_if"&gt;enable-if mechanism&lt;/a&gt;. We can then provide a specialisation of &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; for C++ floating-point types,
+which&amp;nbsp;reads:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;namespace&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+
+&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="n"&gt;cos_impl&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;enable_if&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;is_floating_point&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;type&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;auto&lt;/span&gt; &lt;span class="k"&gt;operator&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;cos&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+    &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;cos&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;That is, whenever &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; is instantiated with a type &lt;tt class="docutils literal"&gt;T&lt;/tt&gt; which is a floating-point type, the
+second (specialised) implementation will be selected. If now we try to call the &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function with,
+let&amp;#8217;s say, an argument of type &lt;tt class="docutils literal"&gt;double&lt;/tt&gt;, the call will ultimately be forwarded to &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::cos()&lt;/span&gt;&lt;/tt&gt; as&amp;nbsp;expected.&lt;/p&gt;
+&lt;p&gt;Now, what happens when we call &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; with an &lt;tt class="docutils literal"&gt;int&lt;/tt&gt; argument? The specialisation of &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt;
+comes into play only when &lt;tt class="docutils literal"&gt;T&lt;/tt&gt; is a floating-point type, thus an &lt;tt class="docutils literal"&gt;int&lt;/tt&gt; argument will be forwarded to the
+unspecialised default &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; functor. The unspecialised &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; does not provide any call operator,
+and thus a compile-time error will arise. &lt;span class="caps"&gt;GCC&lt;/span&gt; 5.1&amp;nbsp;says:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="gp"&gt;$&lt;/span&gt; g++-5.1.0 -std&lt;span class="o"&gt;=&lt;/span&gt;c++11 cos.cpp
+&lt;span class="go"&gt;[...]&lt;/span&gt;
+&lt;span class="go"&gt;error: no matching function for call to ‘cos(int)’&lt;/span&gt;
+&lt;span class="go"&gt;[...]&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;As you can see there is no reference in the error message about a missing call operator. The compiler actually
+complains that there is no &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function which takes an argument of type &lt;tt class="docutils literal"&gt;int&lt;/tt&gt;. What happens here is that
+the declaration of the &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function,&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="kr"&gt;inline&lt;/span&gt; &lt;span class="k"&gt;auto&lt;/span&gt; &lt;span class="n"&gt;cos&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cos_impl&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;generates an error due to the fact that the expression &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;cos_impl&amp;lt;T&amp;gt;()(x)&lt;/span&gt;&lt;/tt&gt; is ill-formed
+when &lt;tt class="docutils literal"&gt;T&lt;/tt&gt; is &lt;tt class="docutils literal"&gt;int&lt;/tt&gt; (because of the
+missing call operator in the default &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; implementation). This error is
+treated specially due to a set of rules that go under the name of &lt;a class="reference external" href="http://en.cppreference.com/w/cpp/language/sfinae#Expression_SFINAE"&gt;&lt;span class="caps"&gt;SFINAE&lt;/span&gt;&lt;/a&gt; (substitution failure is not an error):
+instead of generating a &amp;quot;hard&amp;quot; compiler error, the function that triggered the failure is simply &lt;em&gt;removed&lt;/em&gt;.
+For all practical purposes, it is as-if the &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function had been erased from the source code, when invoked with
+an argument of type &lt;tt class="docutils literal"&gt;int&lt;/tt&gt;. The error resulting from the
+compilation thus originates from the missing &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function rather than from the missing call operator. The distinction
+between these two types of error might appear academic at first sight (after all, we end up in both cases with an aborted
+compilation), but it is crucial for the development of further
+metaprogramming techniques involving the detection of the availability of a function at&amp;nbsp;compile-time.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="what-have-we-gained-so-far"&gt;
+&lt;h2&gt;What have we gained so&amp;nbsp;far?&lt;/h2&gt;
+&lt;p&gt;The technique described above for the implementation of a generic, user-extensible &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function has a few
+interesting&amp;nbsp;features:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;it is entirely based on compile-time metaprogramming: no virtual functions, no calling overhead, easily optimisable
+by any modern&amp;nbsp;compiler;&lt;/li&gt;
+&lt;li&gt;we avoid the headaches of function overloading: there is exactly one entry point, completely&amp;nbsp;generic;&lt;/li&gt;
+&lt;li&gt;by using class template specialisation instead of overloading, the order in which the specialisations are declared
+does not matter (the compiler must consider all the visible template specialisations before choosing&amp;nbsp;one);&lt;/li&gt;
+&lt;li&gt;we are also avoiding surprises with implicit conversions: the example above shows how the implementation
+is based on exact type matching - use with an &lt;tt class="docutils literal"&gt;int&lt;/tt&gt; argument will result in a compilation error, even if
+&lt;tt class="docutils literal"&gt;int&lt;/tt&gt; instances are implicitly convertible to floating-point&amp;nbsp;types;&lt;/li&gt;
+&lt;li&gt;the technique is nonintrusive: user-defined types are not required to derive from a common base class or to
+implement specific methods in order to be usable by our generic &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function.
+They will only need to provide an additional specialisation of the implementation&amp;nbsp;functor;&lt;/li&gt;
+&lt;li&gt;the technique is &lt;span class="caps"&gt;SFINAE&lt;/span&gt;-friendly: in case the &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; specialisation is missing, the &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function
+is removed from the overload resolution&amp;nbsp;set;&lt;/li&gt;
+&lt;li&gt;unlike with usual function overloading, we can specialise the behaviour not only based on concrete types, but
+on arbitrary compile-time &lt;em&gt;predicates&lt;/em&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The last point is, I think, particularly interesting. It is not unusual in scientific C++ libraries to see&amp;nbsp;either&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;heavy usage of macros to declare and define multiple overloads of the same function with different
+argument types (&lt;tt class="docutils literal"&gt;float&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;double&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;long&lt;/tt&gt;, etc.),&amp;nbsp;or&lt;/li&gt;
+&lt;li&gt;functions implemented in terms of &amp;quot;wide&amp;quot; types (e.g., &lt;tt class="docutils literal"&gt;long double&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;long long&lt;/tt&gt;) that can be used with
+narrower types (e.g., &lt;tt class="docutils literal"&gt;float&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;int&lt;/tt&gt;) via implicit&amp;nbsp;conversions.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;With this approach, any compile-time predicate that produces a boolean value can be used to specialise the
+implementation. In the example above, we used the&amp;nbsp;predicate&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;is_floating_point&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;in order to specialise the implementation for floating-point types. In the same fashion, we could implement a generic
+&lt;tt class="docutils literal"&gt;abs()&lt;/tt&gt; function that, for instance, returns the input argument unchanged when invoked on unsigned integer types.
+The specialisation in this case would use the&amp;nbsp;predicate:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;is_integral&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;is_unsigned&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;This predicate would catch all the standard unsigned &lt;a class="reference external" href="http://en.cppreference.com/w/cpp/language/types#Integer_types"&gt;integral types&lt;/a&gt; available in&amp;nbsp;C++.&lt;/p&gt;
+&lt;div class="section" id="intermission-detecting-the-availability-of-cos"&gt;
+&lt;h3&gt;Intermission: detecting the availability of &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt;&lt;/h3&gt;
+&lt;p&gt;One of the points mentioned above is the &amp;quot;&lt;span class="caps"&gt;SFINAE&lt;/span&gt;-friendliness&amp;quot; of the solution: in case of a missing
+&lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; specialisation, the &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; function is removed from the overload resolution set. We can use this
+property to implement a type trait that detects the availability of &lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; for a specific type at&amp;nbsp;compile-time.&lt;/p&gt;
+&lt;p&gt;A possible, C++11-oriented way of implementing such a type trait (by no means the only one) is the&amp;nbsp;following:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;has_cosine&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="n"&gt;yes&lt;/span&gt; &lt;span class="p"&gt;{};&lt;/span&gt;
+        &lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="n"&gt;no&lt;/span&gt; &lt;span class="p"&gt;{};&lt;/span&gt;
+        &lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T1&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+        &lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="k"&gt;auto&lt;/span&gt; &lt;span class="n"&gt;test&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T1&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;cos&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;&lt;span class="n"&gt;yes&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
+        &lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="n"&gt;no&lt;/span&gt; &lt;span class="nf"&gt;test&lt;/span&gt;&lt;span class="p"&gt;(...);&lt;/span&gt;
+    &lt;span class="k"&gt;public&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="kt"&gt;bool&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;is_same&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;test&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;declval&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;())),&lt;/span&gt;&lt;span class="n"&gt;yes&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Without getting into the details of the implementation (the interested reader can use this &lt;a class="reference external" href="http://en.wikibooks.org/wiki/More_C%2B%2B_Idioms/Member_Detector"&gt;Wikibooks page&lt;/a&gt;
+as a starting point), the important takeaway is that&amp;nbsp;now&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;has_cosine&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;double&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;is a compile-time constant with &lt;tt class="docutils literal"&gt;true&lt;/tt&gt; value,&amp;nbsp;while&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="n"&gt;has_cosine&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;is a compile-time constant with &lt;tt class="docutils literal"&gt;false&lt;/tt&gt; value. In Piranha, most generic functions are paired with a
+type trait that determines at compile-time whether it is possible or not to call the function with
+a specific set of argument types. Such type traits become then the basic building blocks of compile-time
+algorithms that, for instance, can select different implementations of a specific functionality based
+on the capabilities offered by the involved&amp;nbsp;types.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="a-step-further-exploiting-the-default-implementation"&gt;
+&lt;h2&gt;A step further: exploiting the default&amp;nbsp;implementation&lt;/h2&gt;
+&lt;p&gt;In the example above, it does not make much sense to provide a default implementation for cosine, and thus
+the unspecialised &lt;tt class="docutils literal"&gt;cos_impl&lt;/tt&gt; functor does not implement any call operator. For other operations, however,
+a default implementation might actually make&amp;nbsp;sense.&lt;/p&gt;
+&lt;p&gt;Consider for instance the classic &lt;a class="reference external" href="http://en.wikipedia.org/wiki/Multiply%E2%80%93accumulate_operation"&gt;multiply-accumulate operation&lt;/a&gt; (&lt;span class="caps"&gt;FMA&lt;/span&gt; for short). Since it is at the basis of so many algorithms,
+from linear algebra to symbolic manipulation, many libraries provide optimised implementations of this primitive.
+A few&amp;nbsp;examples:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;the &lt;a class="reference external" href="http://en.cppreference.com/w/cpp/numeric/math/fma"&gt;C++ standard library&lt;/a&gt; offers &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::fma()&lt;/span&gt;&lt;/tt&gt;, usable with floating-point&amp;nbsp;types;&lt;/li&gt;
+&lt;li&gt;the &lt;a class="reference external" href="https://gmplib.org/manual/Integer-Arithmetic.html"&gt;&lt;span class="caps"&gt;GMP&lt;/span&gt; library&lt;/a&gt; offers &lt;tt class="docutils literal"&gt;mpz_addmul()&lt;/tt&gt;;&lt;/li&gt;
+&lt;li&gt;the &lt;a class="reference external" href="http://www.mpfr.org/mpfr-current/mpfr.html#Special-Functions"&gt;&lt;span class="caps"&gt;MPFR&lt;/span&gt; library&lt;/a&gt; offers &lt;tt class="docutils literal"&gt;mpfr_fma()&lt;/tt&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The use of a specialised &lt;span class="caps"&gt;FMA&lt;/span&gt; operation can typically result in increased performance and/or accuracy.
+In a generic scientific library it thus makes sense to try to take advantage of such a feature, if&amp;nbsp;available.&lt;/p&gt;
+&lt;p&gt;On the other hand, a specialised &lt;span class="caps"&gt;FMA&lt;/span&gt; is an optimisation: it would be nice not to force the user of the library
+to implement the &lt;span class="caps"&gt;FMA&lt;/span&gt; primitive for her user-defined type, if for any reason she is not interested in it. The &lt;span class="caps"&gt;FMA&lt;/span&gt; operation, after all,
+is essentially equivalent&amp;nbsp;to&lt;/p&gt;
+&lt;div class="math"&gt;
+\begin{equation*}
+a \leftarrow a + ( b \times c )
+\end{equation*}
+&lt;/div&gt;
+&lt;p&gt;so it can be implemented also in terms of addition, multiplication and&amp;nbsp;assignment.&lt;/p&gt;
+&lt;p&gt;In Piranha, the &lt;span class="caps"&gt;FMA&lt;/span&gt; operation is called &lt;tt class="docutils literal"&gt;multiply_accumulate()&lt;/tt&gt;, and its implementation&amp;nbsp;reads:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="kr"&gt;inline&lt;/span&gt; &lt;span class="k"&gt;auto&lt;/span&gt; &lt;span class="n"&gt;multiply_accumulate&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;
+   &lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;multiply_accumulate_impl&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+   &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;multiply_accumulate_impl&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The default implementation functor&amp;nbsp;is:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kt"&gt;void&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="n"&gt;multiply_accumulate_impl&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+   &lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T2&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+   &lt;span class="k"&gt;auto&lt;/span&gt; &lt;span class="k"&gt;operator&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="n"&gt;T2&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T2&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T2&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+   &lt;span class="p"&gt;{&lt;/span&gt;
+      &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+   &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;(More on that second template parameter &lt;tt class="docutils literal"&gt;T2&lt;/tt&gt; in a&amp;nbsp;moment)&lt;/p&gt;
+&lt;p&gt;The call operator of the default implementation is now present, and it implements the &lt;span class="caps"&gt;FMA&lt;/span&gt; operation in terms of multiplication
+and in-place addition. Any type which supports these two operations (e.g., &lt;tt class="docutils literal"&gt;int&lt;/tt&gt;) will thus have a working &lt;span class="caps"&gt;FMA&lt;/span&gt;&amp;nbsp;implementation.&lt;/p&gt;
+&lt;p&gt;We can now specialise the behaviour for, e.g., floating point&amp;nbsp;types:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="n"&gt;multiply_accumulate_impl&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;enable_if&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;is_floating_point&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;::&lt;/span&gt;&lt;span class="n"&gt;type&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+   &lt;span class="k"&gt;auto&lt;/span&gt; &lt;span class="k"&gt;operator&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;fma&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+   &lt;span class="p"&gt;{&lt;/span&gt;
+      &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;::&lt;/span&gt;&lt;span class="n"&gt;fma&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+   &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;What happens when we try to call the default implementation on a type which does not support addition, multiplication or
+assignment? Let&amp;#8217;s try an &lt;span class="caps"&gt;FMA&lt;/span&gt; on &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::string&lt;/span&gt;&lt;/tt&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="go"&gt;error: no matching function for call to ‘multiply_accumulate(std::string&amp;amp;, std::string&amp;amp;, std::string&amp;amp;)’&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;It looks like the &lt;tt class="docutils literal"&gt;multiply_accumulate()&lt;/tt&gt; function for &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::string&lt;/span&gt;&lt;/tt&gt; has been erased, and there is no reference to the missing
+&lt;tt class="docutils literal"&gt;*&lt;/tt&gt; operator for &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::string&lt;/span&gt;&lt;/tt&gt;. How does this happen? The answer is in the implementation of the call
+operator in the default implementation of &lt;tt class="docutils literal"&gt;multiply_accumulate_impl&lt;/tt&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span class="k"&gt;template&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;typename&lt;/span&gt; &lt;span class="n"&gt;T2&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="k"&gt;auto&lt;/span&gt; &lt;span class="k"&gt;operator&lt;/span&gt;&lt;span class="p"&gt;()(&lt;/span&gt;&lt;span class="n"&gt;T2&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T2&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;T2&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="k"&gt;decltype&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+   &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;This operator is a template method which deduces its return type from the expression &lt;tt class="docutils literal"&gt;x += y * z&lt;/tt&gt;. As such, if the
+expression &lt;tt class="docutils literal"&gt;x += y * z&lt;/tt&gt; is ill-formed, then the call operator is, under &lt;span class="caps"&gt;SFINAE&lt;/span&gt; rules, removed from the overload resolution set,
+and &lt;tt class="docutils literal"&gt;multiply_accumulate_impl&lt;/tt&gt; is effectively left without a call operator. The top-level &lt;tt class="docutils literal"&gt;multiply_accumulate()&lt;/tt&gt; function
+will then see, when called with &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::string&lt;/span&gt;&lt;/tt&gt; arguments, a &lt;tt class="docutils literal"&gt;multiply_accumulate_impl&lt;/tt&gt; functor with no call operator, and thus
+&lt;span class="caps"&gt;SFINAE&lt;/span&gt; rules will also remove the &lt;tt class="docutils literal"&gt;multiply_accumulate()&lt;/tt&gt; function from the overload resolution set. This also means that, even in the
+presence of a default implementation, it will still be possible to write a type trait to detect the availability
+of &lt;tt class="docutils literal"&gt;multiply_accumulate()&lt;/tt&gt;, in the same fashion as done above for &lt;tt class="docutils literal"&gt;has_cosine&lt;/tt&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="generalising-to-multiple-arguments"&gt;
+&lt;h2&gt;Generalising to multiple&amp;nbsp;arguments&lt;/h2&gt;
+&lt;p&gt;The two examples we have seen so far involve specialisation based on a single type (&lt;tt class="docutils literal"&gt;cos()&lt;/tt&gt; is a single-argument function,
+&lt;tt class="docutils literal"&gt;multiply_accumulate()&lt;/tt&gt; operates on three arguments of the same type by design). It is however clear that the patterns described
+above can readily be generalised to functions accepting multiple arguments of different&amp;nbsp;types.&lt;/p&gt;
+&lt;p&gt;An obvious example is exponentiation, &lt;tt class="docutils literal"&gt;pow()&lt;/tt&gt;, which is a function of two arguments: a base and an exponent.
+In Piranha, the &lt;tt class="docutils literal"&gt;pow()&lt;/tt&gt; function has different implementations depending on the involved types. A few&amp;nbsp;examples:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;if both the base and the exponent are C++ arithmetic types and at least one of the two arguments is a floating-point type,
+then &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::pow()&lt;/span&gt;&lt;/tt&gt; is&amp;nbsp;used;&lt;/li&gt;
+&lt;li&gt;if at least one argument is an &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; (an arbitrary precision integral type implemented on top of &lt;span class="caps"&gt;GMP&lt;/span&gt;) and the other
+is an &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; or a C++ integral type, then the exact result will be returned as an &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; (computed via a &lt;span class="caps"&gt;GMP&lt;/span&gt;&amp;nbsp;routine);&lt;/li&gt;
+&lt;li&gt;if an argument is an &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; and the other one is a floating-point type, then the &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt; argument is converted to
+the floating-point type and the result computed via &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;std::pow()&lt;/span&gt;&lt;/tt&gt;;&lt;/li&gt;
+&lt;li&gt;if the two arguments are both C++ integral types, then the exact result is returned as an &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Additional specialisations are implemented for Piranha&amp;#8217;s &lt;tt class="docutils literal"&gt;real&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;rational&lt;/tt&gt; types (&lt;tt class="docutils literal"&gt;real&lt;/tt&gt; is a C++ wrapper around &lt;span class="caps"&gt;MPFR&lt;/span&gt;&amp;#8217;s &lt;tt class="docutils literal"&gt;mpfr_t&lt;/tt&gt; type,
+&lt;tt class="docutils literal"&gt;rational&lt;/tt&gt; an arbitrary-precision rational type built on top of &lt;tt class="docutils literal"&gt;integer&lt;/tt&gt;).&lt;/p&gt;
+&lt;p&gt;The implementation of Piranha&amp;#8217;s &lt;tt class="docutils literal"&gt;pow()&lt;/tt&gt; function is too long to be reproduced here. It is available from the &lt;a class="reference external" href="https://github.com/bluescarni/piranha/blob/4d600d04b48af3ce241d91d2f8f0fde45f822872/src/pow.hpp"&gt;Git repository&lt;/a&gt; for the
+interested reader. As in the previous examples, the implementation is &lt;span class="caps"&gt;SFINAE&lt;/span&gt;-friendly and lends itself to compile-time introspection
+via a type&amp;nbsp;trait.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="closing-remarks"&gt;
+&lt;h2&gt;Closing&amp;nbsp;remarks&lt;/h2&gt;
+&lt;p&gt;&lt;span class="caps"&gt;SFINAE&lt;/span&gt;-based template metaprogramming in C++11 can be used to introduce a flexible and efficient method of compile-time function dispatching based
+on partial class template specialisation. The method is nonintrusive, it has no runtime &lt;span class="caps"&gt;CPU&lt;/span&gt; or memory overhead, it sidesteps some problematic aspects
+of function overloading, and it allows to select different
+implementations of the same function for different combinations of argument types. The selection can be based either on exact type
+matching or, more generally, on logical compile-time predicates on the involved types. The technique is &lt;span class="caps"&gt;SFINAE&lt;/span&gt;-friendly and lends itself
+to compile-time&amp;nbsp;introspection.&lt;/p&gt;
+&lt;/div&gt;
+&lt;script type='text/javascript'&gt;if (!document.getElementById('mathjaxscript_pelican_#%@#$@#')) {
+    var align = "center",
+        indent = "0em",
+        linebreak = "false";
+
+    if (false) {
+        align = (screen.width &lt; 768) ? "left" : align;
+        indent = (screen.width &lt; 768) ? "0em" : indent;
+        linebreak = (screen.width &lt; 768) ? 'true' : linebreak;
+    }
+    
+    var mathjaxscript = document.createElement('script');
+    mathjaxscript.id = 'mathjaxscript_pelican_#%@#$@#';
+    mathjaxscript.type = 'text/javascript';
+    mathjaxscript.src = '//cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML';
+    mathjaxscript[(window.opera ? "innerHTML" : "text")] =
+        "MathJax.Hub.Config({" +
+        "    config: ['MMLorHTML.js']," +
+        "    TeX: { extensions: ['AMSmath.js','AMSsymbols.js','noErrors.js','noUndefined.js'], equationNumbers: { autoNumber: 'AMS' } }," +
+        "    jax: ['input/TeX','input/MathML','output/HTML-CSS']," +
+        "    extensions: ['tex2jax.js','mml2jax.js','MathMenu.js','MathZoom.js']," +
+        "    displayAlign: '"+ align +"'," +
+        "    displayIndent: '"+ indent +"'," +
+        "    showMathMenu: true," +
+        "    tex2jax: { " +
+        "        inlineMath: [ ['\\\\(','\\\\)'] ], " +
+        "        displayMath: [ ['$$','$$'] ]," +
+        "        processEscapes: true," +
+        "        preview: 'TeX'," +
+        "    }, " +
+        "    'HTML-CSS': { " +
+        "        styles: { '.MathJax_Display, .MathJax .mo, .MathJax .mi, .MathJax .mn': {color: 'inherit ! important'} }," +
+        "        linebreaks: { automatic: "+ linebreak +", width: '90% container' }," +
+        "    }, " +
+        "}); " +
+        "if ('default' !== 'default') {" +
+            "MathJax.Hub.Register.StartupHook('HTML-CSS Jax Ready',function () {" +
+                "var VARIANT = MathJax.OutputJax['HTML-CSS'].FONTDATA.VARIANT;" +
+                "VARIANT['normal'].fonts.unshift('MathJax_default');" +
+                "VARIANT['bold'].fonts.unshift('MathJax_default-bold');" +
+                "VARIANT['italic'].fonts.unshift('MathJax_default-italic');" +
+                "VARIANT['-tex-mathit'].fonts.unshift('MathJax_default-italic');" +
+            "});" +
+            "MathJax.Hub.Register.StartupHook('SVG Jax Ready',function () {" +
+                "var VARIANT = MathJax.OutputJax.SVG.FONTDATA.VARIANT;" +
+                "VARIANT['normal'].fonts.unshift('MathJax_default');" +
+                "VARIANT['bold'].fonts.unshift('MathJax_default-bold');" +
+                "VARIANT['italic'].fonts.unshift('MathJax_default-italic');" +
+                "VARIANT['-tex-mathit'].fonts.unshift('MathJax_default-italic');" +
+            "});" +
+        "}";
+    (document.body || document.getElementsByTagName('head')[0]).appendChild(mathjaxscript);
+}
+&lt;/script&gt;</summary><category term="c++"></category><category term="coding"></category><category term="piranha"></category></entry></feed>
